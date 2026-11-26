@@ -1,0 +1,4 @@
+# Development tools: tests and linting. Install after requirements.txt:
+#   python -m pip install -r requirements-dev.txt
+pytest>=8.3,<9
+ruff>=0.8,<1

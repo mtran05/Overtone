@@ -49,12 +49,12 @@ describe("the preload bridge", () => {
       .join("\n");
     const emitted = new Set([...source.matchAll(/(?:emit|sendEvent)\("(\w+)"/g)].map((match) => match[1]));
     const listened = [...preload.matchAll(/listen\("(\w+)"/g)].map((match) => match[1]);
-    expect(listened.sort()).toEqual(["log", "state"]);
+    expect(listened.sort()).toEqual(["hotkey", "log", "state"]);
     for (const channel of listened) expect(emitted.has(channel), channel).toBe(true);
   });
 
   it("returns an unsubscribe function from every listener", () => {
     expect(preload).toContain("return () => ipcRenderer.removeListener(channel, listener);");
-    for (const name of ["onLog", "onState"]) expect(interfaceBody()).toMatch(new RegExp(`${name}: \\(callback: [^\\n]*\\) => Unsubscribe;`));
+    for (const name of ["onLog", "onState", "onHotkey"]) expect(interfaceBody()).toMatch(new RegExp(`${name}: \\(callback: [^\\n]*\\) => Unsubscribe;`));
   });
 });

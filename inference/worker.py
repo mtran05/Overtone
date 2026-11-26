@@ -33,7 +33,15 @@ import threading
 
 from inference.live import LiveStream, resolve_stream
 from inference.opts import OPT_SPEC
-from inference.realtime import build_converter, build_parser, build_rvc, check_args, pitch_settings, setup_logging
+from inference.realtime import (
+    build_converter,
+    build_parser,
+    build_rvc,
+    check_args,
+    pitch_settings,
+    setup_logging,
+    switchable_trackers,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -126,7 +134,10 @@ class Worker:
         costs = changed_costs(self.args, args)
         live = self.stream is not None
         need_model = self.rvc is None or "model" in costs
-        need_converter = need_model or self.converter is None or "converter" in costs
+        # A pitch tracker that was not warmed up would load inside the audio
+        # path, so switching to one needs the converter rebuilt and warmed.
+        cold_tracker = self.converter is not None and args.f0 not in self.converter.ready_methods
+        need_converter = need_model or self.converter is None or "converter" in costs or cold_tracker
         reopen = live and (need_converter or "stream" in costs)
 
         if reopen:
@@ -148,10 +159,12 @@ class Worker:
             converter = build_converter(args, rvc)
             # GPU work here is safe only because no stream is running: recording a
             # CUDA graph fails if another thread uses the GPU at the same moment.
-            converter.warm_up()
+            # The other trackers are warmed too, so a later switch is seamless.
+            converter.warm_up(also=switchable_trackers())
         else:
             converter = self.converter
             converter.rms_mix_rate = args.rms_mix_rate
+            converter.f0_method = args.f0
 
         self.rvc, self.converter, self.args = rvc, converter, args
         if reopen:
@@ -164,7 +177,13 @@ class Worker:
 
     def _open_stream(self):
         """Open the devices for the current converter and report live."""
-        stream = LiveStream(self.converter, resolve_stream(self.args), self.args, on_error=self._on_stream_error)
+        stream = LiveStream(
+            self.converter,
+            resolve_stream(self.args),
+            self.args,
+            on_error=self._on_stream_error,
+            safety_blocks=self.args.safety_blocks,
+        )
         stream.start()
         self.stream = stream
         self.set_state("live")

@@ -8,6 +8,7 @@
 
 Speak into your microphone and hear the converted voice live, or batch-convert audio files with the same streaming pipeline.
 
+[![CI](https://github.com/mtran05/RVC-clone/actions/workflows/ci.yml/badge.svg)](https://github.com/mtran05/RVC-clone/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
 ![PyTorch 2.7](https://img.shields.io/badge/PyTorch-2.7-EE4C2C?logo=pytorch&logoColor=white)
@@ -64,7 +65,7 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 - **Desktop app.** An Electron + React interface with:
   - **Live:** model, index, device and pitch controls with a streaming process log. The model preloads as soon as you pick it, so going live takes under a second, and every setting can change while you're live.
   - **Presets:** saved voice profiles with artwork, quick switching and last-used tracking.
-  - **SFX:** a soundboard with per-pad keybinds and volume, a master volume, and optional routing to a second output device (for example a virtual cable into Discord or OBS).
+  - **SFX:** a soundboard with per-pad keybinds and volume, a master volume, and optional routing to a second output device (for example a virtual cable into Discord or OBS). Keybinds can also work while another app, such as a game, has focus.
 - **One source of truth for settings.** Every option is defined once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json) and shared by the Python CLI, the Electron main process and the React UI.
 
 ## Requirements
@@ -188,6 +189,7 @@ python -m inference.realtime --model assets/weights/myvoice.pth --live --input-d
 | `--host-api`                           | any     | Only consider devices on this host API (for example `WASAPI`)               |
 | `--latency`                            | auto    | `low`, `high` or a number of seconds                                        |
 | `--wasapi-exclusive`                   | off     | Open WASAPI devices in exclusive mode                                       |
+| `--safety-blocks`                      | `0`     | Blocks of extra delay that absorb an occasional slow block (see [Troubleshooting](#troubleshooting)) |
 
 ## Desktop app
 
@@ -217,6 +219,17 @@ This runs the full verification suite, builds the renderer and produces `desktop
 > Keep `Overtone.exe` inside the project folder (for example in `desktop\dist`). On launch it searches upward for the folder that contains both `.venv\Scripts\python.exe` and `inference\realtime.py`.
 
 Models in `assets\weights` and indexes in `assets\indices` appear in the app automatically, and you can browse to files stored anywhere else.
+
+### Soundboard keys
+
+Click **Bind** on a pad, then press a key or combination. Esc cancels, and Backspace clears the bind. Pad keys work on every page while Overtone has focus.
+
+Turn on **Work in other apps** to make them fire while a game or voice chat has focus too. A system-wide shortcut takes its key away from every other app, so only these binds go global:
+
+- combinations with Ctrl, Alt or the Windows key, such as `Ctrl+1` or `Alt+Shift+Q`;
+- F-keys and numpad keys.
+
+Plain keys like `A` keep working inside Overtone only. Pads that work everywhere show a small lit dot. If another app already owns a shortcut, the log says so and that pad stays in-window.
 
 ## How it works
 
@@ -258,10 +271,15 @@ Each option in [`opts-spec.json`](desktop/shared/opts-spec.json) has an `apply` 
 
 | `apply`     | Options                                              | What happens                                                                  |
 | ----------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `live`      | pitch, formant, index and index rate, gains, thresholds | Used from the next audio block, with no gap                                 |
-| `stream`    | devices, host API, channels, latency, WASAPI         | The audio devices reopen (well under a second); the model stays loaded        |
-| `converter` | block, crossfade and context length, sample rate, pitch tracker | The converter is rebuilt and warmed up (about a second)            |
+| `live`      | pitch, formant, pitch tracker, index and index rate, gains, thresholds | Used from the next audio block, with no gap                  |
+| `stream`    | devices, host API, channels, latency, WASAPI, safety buffer | The audio devices reopen (well under a second); the model stays loaded |
+| `converter` | block, crossfade and context length, sample rate     | The converter is rebuilt and warmed up (about a second)                       |
 | `model`     | the voice model                                      | The voice reloads (about a second); HuBERT and the pitch models stay loaded   |
+
+Two details keep live changes smooth:
+
+- **Every pitch tracker is warmed up in the background preload.** Switching between RMVPE, FCPE and PM while live then only changes which model the next block uses.
+- **No CUDA graph is recorded while a stream is open.** Recording one takes about half a second, longer than a block. So a new formant value runs without a graph at first, still well inside the block's time budget, and gets a graph at the next warm-up.
 
 Pressing Stop closes the stream but keeps the model loaded. If Electron exits or crashes, the worker sees its stdin close and exits too, so it never keeps holding the microphone or the GPU.
 
@@ -297,7 +315,11 @@ Pressing Stop closes the stream but keeps the model loaded. If Electron exits or
 │           ├── lib/           bridge types, option specs, presets, sanitizing
 │           ├── pages/         Live, Presets and SFX pages
 │           └── styles/        global tokens and shared control styles
+├── tests/                     Python tests (pytest), with the model and audio devices faked
+├── .github/workflows/ci.yml   CI: ruff and pytest, plus the desktop verify suite
+├── pyproject.toml             ruff and pytest settings
 ├── requirements.txt
+├── requirements-dev.txt       pytest and ruff
 └── LICENSE
 ```
 
@@ -312,6 +334,26 @@ Pressing Stop closes the stream but keeps the model loaded. If Electron exits or
 | `DEBUG_LAYOUT`             | Development only: writes the window's layout geometry to `%TEMP%\layout-report.txt` and exits. |
 
 ## Development
+
+### Python
+
+Install the development tools once, then run the tests and the linter from the repository root:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
+```powershell
+python -m pytest
+```
+
+```powershell
+python -m ruff check inference tests
+```
+
+The tests need no GPU and no audio device. The worker's decisions, the device handling and the live callback run against fakes, and the converter's block and crossfade path runs on the CPU with a stand-in model. CI runs the same commands on every push and pull request.
+
+### Desktop
 
 All desktop scripts run from the `desktop` folder.
 
@@ -365,7 +407,12 @@ Every option is described once in [`desktop/shared/opts-spec.json`](desktop/shar
 <details>
 <summary><b>Live audio crackles or drops out</b></summary>
 
-Increase `--block-time` (for example to `0.35`), switch to the lighter `fcpe` pitch tracker, or try `--latency high`. Check the log to confirm inference is running on your GPU and not the CPU.
+Check the log to confirm inference is running on your GPU and not the CPU. Then try, in order:
+
+- **A safety buffer:** set **Safety buffer (blocks)** in More settings, or `--safety-blocks 1` or `2`. Conversion moves to its own thread, and the output runs that many blocks behind, so a slow moment, such as a game busy on the GPU, doesn't cut the voice out. The cost is that much extra delay.
+- **A larger block:** raise `--block-time` (for example to `0.35`).
+- **The lighter tracker:** switch to `fcpe`.
+- **More output buffering:** try `--latency high`.
 </details>
 
 <details>

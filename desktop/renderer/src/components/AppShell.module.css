@@ -109,6 +109,16 @@
   display: grid;
 }
 
+/* Wraps the always-mounted soundboard. display: contents makes the page itself
+   the grid item, exactly as if it were rendered directly; hidden removes it. */
+.keepAlive {
+  display: contents;
+}
+
+.keepAlive[hidden] {
+  display: none;
+}
+
 @media (max-width: 760px) {
   .desk {
     --rail: 0px;

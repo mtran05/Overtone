@@ -18,6 +18,8 @@ from collections import OrderedDict
 
 import torch
 
+from inference.live import STREAM_OPEN
+
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,7 @@ class _CapturedCall:
         started = time.perf_counter()
         self.lock = threading.RLock()
         self.inputs = tuple(torch.empty_like(value) for value in inputs)
-        for static, value in zip(self.inputs, inputs):
+        for static, value in zip(self.inputs, inputs, strict=True):
             static.copy_(value)
         device = self.inputs[0].device
         current = torch.cuda.current_stream(device)
@@ -160,7 +162,7 @@ class _CapturedCall:
             stream = torch.cuda.current_stream(self.inputs[0].device)
             if self.done_event is not None:
                 stream.wait_event(self.done_event)
-            for static, value in zip(self.inputs, inputs):
+            for static, value in zip(self.inputs, inputs, strict=True):
                 static.copy_(value, non_blocking=True)
             self.graph.replay()
             output = _clone_output(self.output)
@@ -181,6 +183,7 @@ class _GraphCache:
         self.replay_count = 0
         self.fallback_count = 0
         self.eviction_count = 0
+        self.deferred_count = 0
         self.capture_ms = 0.0
 
     def run(self, key, function, inputs):
@@ -191,6 +194,13 @@ class _GraphCache:
                 self.fallback_count += 1
                 return function(*inputs)
             entry = self.entries.get(signature)
+            if entry is None and STREAM_OPEN.is_set():
+                # Recording takes several times longer than a block (about half a
+                # second for the synthesizer), so while audio is flowing a new
+                # shape, such as a new formant value, runs eagerly instead. It is
+                # recorded at the next warm-up, when no stream is open.
+                self.deferred_count += 1
+                return function(*inputs)
             if entry is None:
                 try:
                     entry = _CapturedCall(function, inputs)
@@ -221,7 +231,7 @@ def run_cuda_graph(owner, namespace, function, *inputs):
     cache = getattr(owner, "_rvc_cuda_graph_cache", None)
     if cache is None:
         cache = _GraphCache()
-        setattr(owner, "_rvc_cuda_graph_cache", cache)
+        owner._rvc_cuda_graph_cache = cache
     return cache.run((str(namespace),), function, tuple(inputs))
 
 
@@ -245,6 +255,7 @@ def get_cuda_graph_stats(owner):
             "replays": 0,
             "fallbacks": 0,
             "evictions": 0,
+            "deferred": 0,
             "capture_ms": 0.0,
         }
     with cache.lock:
@@ -255,5 +266,6 @@ def get_cuda_graph_stats(owner):
             "replays": cache.replay_count,
             "fallbacks": cache.fallback_count,
             "evictions": cache.eviction_count,
+            "deferred": cache.deferred_count,
             "capture_ms": cache.capture_ms,
         }

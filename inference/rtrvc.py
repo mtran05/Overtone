@@ -4,6 +4,8 @@ RVC holds HuBERT, an optional FAISS index, a pitch cache, and the
 synthesizer. infer() is what realtime.py calls for every block.
 """
 
+import contextlib
+import io
 import logging
 import traceback
 from pathlib import Path
@@ -28,8 +30,10 @@ SAMPLE_RATE_16K = 16000
 RMVPE_MODEL_PATH = str((Path(__file__).resolve().parent.parent / "assets" / "rmvpe" / "rmvpe.pt").resolve())
 
 
-def get_synthesizer(pth_path, device=torch.device("cpu")):
+def get_synthesizer(pth_path, device=None):
     """Build the synthesizer that matches a .pth checkpoint and load its weights."""
+    if device is None:
+        device = torch.device("cpu")
     from inference.module.models import (
         SynthesizerTrnMs256NSFsid,
         SynthesizerTrnMs256NSFsid_nono,
@@ -213,7 +217,14 @@ class RVC:
             from inference.fcpe import FCPEInfer
 
             logger.info("Loading FCPE model")
-            self.model_fcpe = FCPEInfer(self.device)
+            # torchfcpe print()s its own [INFO] and [WARN] notes while loading.
+            # Keep them out of the app's log, but available at debug level.
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                self.model_fcpe = FCPEInfer(self.device)
+            for line in printed.getvalue().splitlines():
+                if line.strip():
+                    logger.debug("torchfcpe: %s", line.strip())
 
     def get_f0_post(self, f0):
         """Turn Hz pitch into the coarse 1..255 bins the synthesizer expects."""

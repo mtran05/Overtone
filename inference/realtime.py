@@ -125,7 +125,7 @@ def _run_live(args):
     # Load the pitch model and record the GPU graphs now. Otherwise the first
     # live blocks do that work inside the audio callback and drop out.
     converter.warm_up()
-    stream = LiveStream(converter, config, args)
+    stream = LiveStream(converter, config, args, safety_blocks=args.safety_blocks)
     stream.start()
     logger.info("Live. Press Ctrl+C to stop.")
     try:
@@ -159,6 +159,19 @@ def missing_base_models(f0_method):
             "or pass --f0 fcpe or --f0 pm."
         )
     return None
+
+
+def switchable_trackers():
+    """The GPU pitch trackers the desktop worker warms up ahead of time.
+
+    Warming them all during the background preload lets the app switch tracker
+    while live without a gap. RMVPE needs its downloaded weights; FCPE ships
+    inside torchfcpe. Parselmouth (pm) needs no warm-up.
+    """
+    trackers = ["fcpe"]
+    if (ASSETS / "rmvpe" / "rmvpe.pt").is_file():
+        trackers.insert(0, "rmvpe")
+    return tuple(trackers)
 
 
 def check_args(args):

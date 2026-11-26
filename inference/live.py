@@ -8,12 +8,23 @@ when a device is actually touched.
 
 import json
 import logging
+import queue
+import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
 
 
 logger = logging.getLogger(__name__)
+
+# Set while any LiveStream is open. cuda_graph.py reads it: recording a new GPU
+# graph takes several blocks' worth of time, so while audio flows a new shape
+# runs eagerly instead and is recorded at the next warm-up.
+STREAM_OPEN = threading.Event()
+
+# How often, at most, a "fell behind" warning is logged in safety-buffer mode.
+_BEHIND_LOG_SECONDS = 5.0
 
 
 def import_sounddevice():
@@ -94,7 +105,7 @@ def parse_latency(value):
     try:
         return float(value)
     except ValueError:
-        raise SystemExit("--latency must be low, high, or a number of seconds")
+        raise SystemExit("--latency must be low, high, or a number of seconds") from None
 
 
 def wasapi_settings(sd, args, input_device, output_device):
@@ -213,51 +224,120 @@ class LiveStream:
     `levels` is anything with input_gain, output_gain, and no_clip, such as the
     parsed options. It is read on every block, so the worker can swap in new
     options while the stream runs and the next block uses them.
+
+    With safety_blocks at 0, each block is converted inside the audio callback:
+    the least delay, but a block that takes too long drops out. With N above 0,
+    a separate thread converts, and the output runs N blocks behind the input,
+    so a block may take up to N block-lengths extra before anything drops out.
     """
 
-    def __init__(self, converter, config, levels, on_error=None):
+    def __init__(self, converter, config, levels, on_error=None, safety_blocks=0):
         """Remember what to open. Nothing touches the audio devices until start()."""
         self.converter = converter
         self.config = config
         self.levels = levels
         self.on_error = on_error
+        self.safety_blocks = max(0, int(safety_blocks))
         self._stream = None
+        self._thread = None
+        self._inputs = None
+        self._outputs = None
+        self._behind = 0
+        self._behind_logged = 0.0
+
+    def _report(self, error):
+        """Log a conversion failure and pass it to on_error."""
+        logger.error("Live conversion failed", exc_info=error)
+        if self.on_error is not None:
+            self.on_error(error)
+
+    def _write(self, outdata, converted):
+        """Apply the output gain and clipping, then fill every output channel."""
+        levels = self.levels
+        converted = converted * levels.output_gain
+        if not levels.no_clip:
+            converted = np.clip(converted, -1.0, 1.0)
+        if outdata.shape[1] == 1:
+            outdata[:, 0] = converted
+        else:
+            outdata[:] = converted[:, None]
+
+    def _note_behind(self):
+        """Count a block played as silence because conversion was late; log now and then."""
+        self._behind += 1
+        now = time.monotonic()
+        if now - self._behind_logged >= _BEHIND_LOG_SECONDS:
+            self._behind_logged = now
+            logger.warning("Audio stream: conversion fell behind; %d block(s) played as silence so far", self._behind)
+
+    def _convert_loop(self):
+        """Safety-buffer mode: convert queued input blocks until close() sends None."""
+        while True:
+            block = self._inputs.get()
+            if block is None:
+                return
+            try:
+                converted = self.converter.process_block(block)
+            except Exception as error:
+                self._report(error)
+                return
+            self._outputs.put(converted)
+            # Keep the delay bounded: if output piled up, drop the oldest.
+            while self._outputs.qsize() > self.safety_blocks + 1:
+                try:
+                    self._outputs.get_nowait()
+                except queue.Empty:
+                    break
 
     def start(self):
         """Open the devices and begin converting."""
         sd = import_sounddevice()
         converter = self.converter
+        buffered = self.safety_blocks > 0
 
         def callback(indata, outdata, frames, time_info, status):
-            """Convert one microphone block and copy it into the speaker buffer."""
+            """Hand one microphone block to the converter and play converted audio."""
             if status:
                 logger.warning("Audio stream: %s", status)
+            mono = np.mean(indata, axis=1) if indata.ndim == 2 else indata
+            mono = mono * self.levels.input_gain
+            if buffered:
+                try:
+                    self._inputs.put_nowait(np.array(mono, dtype=np.float32))
+                except queue.Full:
+                    self._note_behind()
+                try:
+                    converted = self._outputs.get_nowait()
+                except queue.Empty:
+                    self._note_behind()
+                    outdata.fill(0)
+                    return
+                self._write(outdata, converted)
+                return
             try:
-                levels = self.levels
-                mono = np.mean(indata, axis=1) if indata.ndim == 2 else indata
-                mono = mono * levels.input_gain
-                converted = converter.process_block(mono) * levels.output_gain
-                if not levels.no_clip:
-                    converted = np.clip(converted, -1.0, 1.0)
-                if outdata.shape[1] == 1:
-                    outdata[:, 0] = converted
-                else:
-                    outdata[:] = converted[:, None]
+                self._write(outdata, converter.process_block(mono))
             except Exception as error:
                 # An exception would otherwise end the stream with nothing but a
                 # traceback. Report it, then stop cleanly.
-                logger.exception("Live conversion failed")
                 outdata.fill(0)
-                if self.on_error is not None:
-                    self.on_error(error)
+                self._report(error)
                 raise sd.CallbackAbort from error
 
         logger.info(
-            "Input %s, output %s. Block size is %d samples.",
+            "Input %s, output %s. Block size is %d samples%s.",
             device_label(sd, self.config.input_device, "input"),
             device_label(sd, self.config.output_device, "output"),
             converter.block_frame,
+            f", {self.safety_blocks} safety block(s)" if buffered else "",
         )
+        if buffered:
+            self._inputs = queue.Queue(maxsize=self.safety_blocks + 2)
+            self._outputs = queue.Queue()
+            # The head start that lets a slow block catch up: N blocks of silence.
+            for _ in range(self.safety_blocks):
+                self._outputs.put(np.zeros(converter.block_frame, dtype=np.float32))
+            self._thread = threading.Thread(target=self._convert_loop, name="live-convert", daemon=True)
+            self._thread.start()
         self._stream = sd.Stream(
             device=(self.config.input_device, self.config.output_device),
             samplerate=converter.sample_rate,
@@ -268,13 +348,31 @@ class LiveStream:
             extra_settings=self.config.extra_settings,
             callback=callback,
         )
-        self._stream.start()
+        STREAM_OPEN.set()
+        try:
+            self._stream.start()
+        except Exception:
+            self.close()
+            raise
 
     def close(self):
         """Stop and release the devices. Safe to call twice."""
         stream, self._stream = self._stream, None
-        if stream is not None:
-            try:
-                stream.abort()
-            finally:
-                stream.close()
+        thread, self._thread = self._thread, None
+        try:
+            if stream is not None:
+                try:
+                    stream.abort()
+                finally:
+                    stream.close()
+        finally:
+            if thread is not None:
+                # The queue is bounded: empty it so the stop marker always fits.
+                while True:
+                    try:
+                        self._inputs.get_nowait()
+                    except queue.Empty:
+                        break
+                self._inputs.put_nowait(None)
+                thread.join(timeout=5)
+            STREAM_OPEN.clear()

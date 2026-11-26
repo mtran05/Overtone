@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+
 OPT_SPEC_PATH = Path(__file__).resolve().parent.parent / "desktop" / "shared" / "opts-spec.json"
 OPT_SPEC = json.loads(OPT_SPEC_PATH.read_text(encoding="utf-8"))["options"]
 

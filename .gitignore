@@ -9,3 +9,5 @@ desktop/dist/
 desktop/renderer/node_modules/
 desktop/renderer/dist/
 **/.DS_Store
+.pytest_cache/
+.ruff_cache/

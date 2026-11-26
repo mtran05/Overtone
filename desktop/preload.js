@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld("rvc", {
   configure: (opts) => ipcRenderer.invoke("configure", opts),
   start: (opts) => ipcRenderer.invoke("start", opts),
   stop: () => ipcRenderer.invoke("stop"),
+  setHotkeys: (binds) => ipcRenderer.invoke("hotkeys", binds),
   onLog: (callback) => listen("log", (line) => callback(line)),
   onState: (callback) => listen("state", (state) => callback(state)),
+  onHotkey: (callback) => listen("hotkey", (id) => callback(id)),
 });

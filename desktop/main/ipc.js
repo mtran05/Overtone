@@ -6,10 +6,11 @@
 
 const fs = require("fs");
 const path = require("path");
-const { dialog, ipcMain } = require("electron");
+const { dialog, globalShortcut, ipcMain } = require("electron");
 const { buildArgs, parseDevices } = require("../args");
 const { missingBaseModels } = require("../repo");
-const { filesIn, runPython } = require("./python");
+const { applyHotkeys } = require("./hotkeys");
+const { emit, filesIn, runPython } = require("./python");
 const { getWin } = require("./state");
 
 const AUDIO_EXTS = [".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"];
@@ -125,6 +126,9 @@ function registerIpc(locator, worker) {
     worker.send("start", prepared.argv);
     return { ok: true };
   });
+
+  // System-wide soundboard keys. Each call replaces the whole set; [] clears it.
+  ipcMain.handle("hotkeys", (_event, binds) => applyHotkeys(globalShortcut, binds, (id) => emit("hotkey", id)));
 
   // Close the stream. The model stays loaded for the next start.
   ipcMain.handle("stop", () => {

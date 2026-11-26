@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Rail from "./Rail";
 import LivePage from "../pages/LivePage";
 import PresetsPage from "../pages/PresetsPage";
@@ -7,12 +7,16 @@ import { useSession } from "../lib/session";
 import styles from "./AppShell.module.css";
 
 // The window frame: the page rail, the title and status lamp, and whichever
-// page the hash route names. Only the current page is mounted, so no page has to
-// hide itself with CSS.
+// page the hash route names.
+//
+// Live and Presets mount only while shown. The soundboard stays mounted and is
+// hidden instead, because its keys must keep firing, and its clips keep
+// playing, while another page or another app has focus.
 //
 // Hash routes are used because the packaged app is loaded from file://.
 export default function AppShell() {
   const { status, statusLabel } = useSession();
+  const { pathname } = useLocation();
 
   return (
     <div className={styles.desk} data-status={status.toLowerCase()}>
@@ -27,9 +31,12 @@ export default function AppShell() {
         <Routes>
           <Route path="/live" element={<LivePage />} />
           <Route path="/presets" element={<PresetsPage />} />
-          <Route path="/sfx" element={<SfxPage />} />
+          <Route path="/sfx" element={null} />
           <Route path="*" element={<Navigate to="/live" replace />} />
         </Routes>
+        <div className={styles.keepAlive} hidden={pathname !== "/sfx"}>
+          <SfxPage />
+        </div>
       </main>
     </div>
   );

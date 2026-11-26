@@ -5,7 +5,7 @@
 // API through preload.js. The work lives in main/.
 
 const path = require("path");
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, globalShortcut } = require("electron");
 const { registerIpc } = require("./main/ipc");
 const { createLocator } = require("./main/locate");
 const { setWin } = require("./main/state");
@@ -58,5 +58,8 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   worker.shutdown().then(() => app.quit());
 });
+
+// System-wide soundboard keys belong to this app; give them back on the way out.
+app.on("will-quit", () => globalShortcut.unregisterAll());
 
 app.on("window-all-closed", () => app.quit());

@@ -64,6 +64,9 @@ class RealtimeConverter:
         """
         self.f0_method = f0_method
         self.rms_mix_rate = rms_mix_rate
+        # Pitch trackers that can be switched to without one-time work in the
+        # audio path. Filled in by warm_up(); empty until then.
+        self.ready_methods = set()
         self.rvc = rvc
         self.config = rvc.config
         self.device = self.config.device
@@ -174,18 +177,39 @@ class RealtimeConverter:
         ]
         return inferred[: self.block_frame].detach().cpu().numpy()
 
-    def warm_up(self, blocks=2):
+    def warm_up(self, blocks=2, also=()):
         """Run silent blocks so the first real block does no one-time work.
 
         The first block loads the pitch model and records the CUDA graphs for
         this block size. Live, that happens inside the audio callback and drops
         audio, so it is done here, before the stream opens. The buffers are
         cleared afterwards so the silence leaves no trace in the output.
+
+        `also` names more pitch trackers to load and record now, so switching
+        to one while live is only a change of which model the next block uses.
+        A tracker that fails to warm up is left out of ready_methods and logged.
         """
         started = time.perf_counter()
         silence = np.zeros(self.block_frame, dtype=np.float32)
-        for _ in range(blocks):
-            self.process_block(silence)
+        chosen = self.f0_method
+        # Parselmouth (pm) runs on the CPU with nothing to load or record.
+        self.ready_methods = {chosen, "pm"}
+        try:
+            for _ in range(blocks):
+                self.process_block(silence)
+            for method in also:
+                if method in self.ready_methods:
+                    continue
+                self.f0_method = method
+                try:
+                    for _ in range(blocks):
+                        self.process_block(silence)
+                except Exception:
+                    logger.warning("Could not warm up the %s pitch tracker; switching to it will restart the stream", method, exc_info=True)
+                else:
+                    self.ready_methods.add(method)
+        finally:
+            self.f0_method = chosen
         self.input_wav.zero_()
         self.input_wav_res.zero_()
         self.sola_buffer.zero_()

@@ -35,8 +35,12 @@ export interface RvcBridge {
   configure: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   start: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   stop: () => Promise<{ ok: true }>;
+  /** Replace the system-wide soundboard keys. Reports which ones another app already owns. */
+  setHotkeys: (binds: { id: string; accelerator: string }[]) => Promise<{ registered: string[]; failed: string[] }>;
   onLog: (callback: (line: string) => void) => Unsubscribe;
   onState: (callback: (state: WorkerState) => void) => Unsubscribe;
+  /** A system-wide soundboard key was pressed; the payload is the pad id. */
+  onHotkey: (callback: (id: string) => void) => Unsubscribe;
 }
 
 export interface InferenceOpts {
@@ -50,6 +54,7 @@ export interface InferenceOpts {
   blockTime: number;
   crossfadeTime: number;
   extraTime: number;
+  safetyBlocks: number;
   rmsMixRate: number;
   inputDevice: string;
   outputDevice: string;

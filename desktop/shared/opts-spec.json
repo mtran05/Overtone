@@ -75,7 +75,7 @@
     },
     "f0": {
       "flag": "--f0",
-      "apply": "converter",
+      "apply": "live",
       "kind": "enum",
       "default": "rmvpe",
       "choices": ["rmvpe", "fcpe", "pm"],
@@ -214,6 +214,20 @@
       "label": "Context (seconds)",
       "tip": "How much of what you just said is kept in mind. More of it can sound steadier.",
       "cliHelp": "Context kept before each block"
+    },
+    "safetyBlocks": {
+      "flag": "--safety-blocks",
+      "apply": "stream",
+      "kind": "number",
+      "integer": true,
+      "default": 0,
+      "step": 1,
+      "min": 0,
+      "max": 4,
+      "section": "timing",
+      "label": "Safety buffer (blocks)",
+      "tip": "Adds this many blocks of delay so that a slow moment, such as a game busy on the graphics card, does not cut the voice out. 0 has the least delay.",
+      "cliHelp": "Blocks of extra delay that absorb slow conversions (0 converts in the audio callback)"
     },
     "indexNeighbors": {
       "flag": "--index-neighbors",
