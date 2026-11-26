@@ -62,7 +62,7 @@ export interface TuneSection {
 }
 
 export const TUNING: TuneSection[] = [
-  { title: "Timing", fields: ["blockTime", "crossfadeTime", "extraTime"] },
+  { title: "Timing", fields: ["blockTime", "crossfadeTime", "extraTime", "safetyBlocks"] },
   { title: "Pitch", fields: ["f0Min", "f0Max", "rmvpeThreshold", "fcpeThreshold"] },
   { title: "Index", fields: ["indexNeighbors"] },
   { title: "Gain", fields: ["inputGain", "outputGain", "noClip"] },

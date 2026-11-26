@@ -1,0 +1,28 @@
+# Tool settings only: the project is run from the checkout, not installed.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 160
+# The synthesizer is ported from upstream RVC and kept as it is so it stays easy to re-sync.
+extend-exclude = ["inference/module", "desktop", "assets"]
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle errors, import order, and bugbear.
+select = ["F", "E", "W", "I", "B"]
+ignore = [
+    # Long lines are allowed where splitting would hurt (paths, messages, URLs).
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["inference"]
+lines-after-imports = 2
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    # librosa's own use of a deprecated importlib API; nothing to fix here.
+    "ignore:path is deprecated:DeprecationWarning:librosa",
+]

@@ -2,8 +2,10 @@ import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { bridge } from "../lib/bridge";
 import { cx } from "../lib/cx";
 import { baseName } from "../lib/format";
+import { acceleratorFromEvent, canBeGlobal, normalizeKeybind } from "../lib/hotkeys";
 import { useSession } from "../lib/session";
 import Button from "../components/Button";
+import CheckField from "../components/CheckField";
 import Field from "../components/Field";
 import LabelRow from "../components/LabelRow";
 import RangeField from "../components/RangeField";
@@ -26,6 +28,8 @@ interface StoredSfxState {
   volumes?: Record<string, number>;
   custom?: SfxItem[];
   masterVolume?: number;
+  /** Register safe keybinds system-wide, so pads fire while another app has focus. */
+  globalHotkeys?: boolean;
 }
 
 const STORAGE_KEY = "overtone_sfx_state_v1";
@@ -72,7 +76,7 @@ function mergeSounds(base: SfxItem[], saved: StoredSfxState): SfxItem[] {
   const custom = (saved.custom ?? []).map((item) => ({
     ...item,
     custom: true,
-    keybind: keybinds[item.id] ?? item.keybind,
+    keybind: normalizeKeybind(keybinds[item.id] ?? item.keybind),
     volume: volumes[item.id] ?? item.volume ?? 0.8,
   }));
   const seen = new Set(custom.map((item) => item.id));
@@ -82,7 +86,7 @@ function mergeSounds(base: SfxItem[], saved: StoredSfxState): SfxItem[] {
     seen.add(sound.id);
     merged.push({
       ...sound,
-      keybind: keybinds[sound.id] ?? sound.keybind,
+      keybind: normalizeKeybind(keybinds[sound.id] ?? sound.keybind),
       volume: volumes[sound.id] ?? sound.volume,
     });
   }
@@ -101,6 +105,10 @@ export default function SfxPage() {
   const [search, setSearch] = useState<string>("");
   const [sfxOutput, setSfxOutput] = useState<string>("");
   const [listeningForKey, setListeningForKey] = useState<string | null>(null);
+  const [globalHotkeys, setGlobalHotkeys] = useState<boolean>(() => savedInit.current.globalHotkeys ?? false);
+  // Accelerators the system actually gave us; the window handler skips these so a press is not handled twice.
+  const [registeredGlobal, setRegisteredGlobal] = useState<Set<string>>(() => new Set());
+  const reportedTaken = useRef<Set<string>>(new Set());
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
 
   const allRunningAudios = useRef<Set<HTMLAudioElement>>(new Set());
@@ -113,11 +121,15 @@ export default function SfxPage() {
     const rvc = bridge();
     if (!rvc) return;
     void rvc.assets().then((assets) => {
+      // These arrive after the saved state was merged, so apply their saved
+      // keybind and volume here; otherwise both were lost on every restart.
+      const saved = savedInit.current;
       const diskSounds = (assets.sounds ?? []).map((filePath) => ({
         id: filePath,
         name: formatDisplayName(filePath),
         path: toPlayableUrl(filePath),
-        volume: 0.8,
+        keybind: normalizeKeybind(saved.keybinds?.[filePath]),
+        volume: saved.volumes?.[filePath] ?? 0.8,
       }));
       if (diskSounds.length === 0) return;
       setSfxList((current) => {
@@ -158,12 +170,12 @@ export default function SfxPage() {
         volumes[item.id] = item.volume;
         if (item.custom) custom.push(item);
       }
-      const payload: StoredSfxState = { keybinds, volumes, custom, masterVolume };
+      const payload: StoredSfxState = { keybinds, volumes, custom, masterVolume, globalHotkeys };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
       // Ignore storage errors.
     }
-  }, [sfxList, masterVolume]);
+  }, [sfxList, masterVolume, globalHotkeys]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -285,16 +297,20 @@ export default function SfxPage() {
           setListeningForKey(null);
           return;
         }
-        const keyName = e.key.length === 1 ? e.key.toUpperCase() : e.code;
-        setSfxList((prev) => prev.map((item) => (item.id === listeningForKey ? { ...item, keybind: keyName } : item)));
+        // Holding Ctrl, Alt, Shift, or Win alone waits for the key that completes the combination.
+        const accelerator = acceleratorFromEvent(e);
+        if (!accelerator) return;
+        setSfxList((prev) => prev.map((item) => (item.id === listeningForKey ? { ...item, keybind: accelerator } : item)));
         setListeningForKey(null);
         return;
       }
 
       if (isInput) return;
 
-      const pressed = e.key.length === 1 ? e.key.toLowerCase() : e.code.toLowerCase();
-      const match = sfxList.find((item) => item.keybind && item.keybind.toLowerCase() === pressed);
+      const pressed = acceleratorFromEvent(e);
+      // A system-wide shortcut already fired for this press.
+      if (!pressed || registeredGlobal.has(pressed)) return;
+      const match = sfxList.find((item) => item.keybind === pressed);
       if (match && !e.repeat) {
         void togglePlay(match.id);
       }
@@ -302,7 +318,47 @@ export default function SfxPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [sfxList, listeningForKey, togglePlay]);
+  }, [sfxList, listeningForKey, togglePlay, registeredGlobal]);
+
+  // System-wide keys. Only binds that are safe to take from every app are sent;
+  // the others keep working while this window has focus. Paused while a key is
+  // being recorded, so pressing an already-bound key can rebind it.
+  const globalBinds =
+    globalHotkeys && !listeningForKey ? sfxList.filter((item) => canBeGlobal(item.keybind)).map((item) => ({ id: item.id, accelerator: item.keybind! })) : [];
+  const globalBindsKey = JSON.stringify(globalBinds);
+  useEffect(() => {
+    const rvc = bridge();
+    if (!rvc) return;
+    let cancelled = false;
+    void rvc.setHotkeys(JSON.parse(globalBindsKey)).then(({ registered, failed }) => {
+      if (cancelled) return;
+      setRegisteredGlobal(new Set(registered));
+      for (const accelerator of failed) {
+        if (reportedTaken.current.has(accelerator)) continue;
+        reportedTaken.current.add(accelerator);
+        pushLog(`${accelerator} is already used by another app, so it only works while Overtone has focus.`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [globalBindsKey, pushLog]);
+
+  // Release the system-wide keys when the soundboard goes away.
+  useEffect(() => {
+    return () => {
+      void bridge()?.setHotkeys([]);
+    };
+  }, []);
+
+  // Pads fired by a system-wide key. The ref keeps the listener on the latest togglePlay.
+  const togglePlayRef = useRef(togglePlay);
+  togglePlayRef.current = togglePlay;
+  useEffect(() => {
+    const rvc = bridge();
+    if (!rvc) return;
+    return rvc.onHotkey((id) => void togglePlayRef.current(id));
+  }, []);
 
   const updateItemVolume = (id: string, newVolume: number) => {
     setSfxList((prev) => prev.map((item) => (item.id === id ? { ...item, volume: newVolume } : item)));
@@ -408,6 +464,14 @@ export default function SfxPage() {
                       type="button"
                       className={styles.keybind}
                       data-listening={isListening ? "true" : undefined}
+                      data-global={globalHotkeys && sfx.keybind && registeredGlobal.has(sfx.keybind) ? "true" : undefined}
+                      title={
+                        isListening
+                          ? "Press a key or combination. Esc cancels, Backspace clears."
+                          : globalHotkeys && sfx.keybind && !canBeGlobal(sfx.keybind)
+                            ? "Works only while Overtone has focus. Add Ctrl or Alt, or use an F-key or the numpad, to use it in other apps."
+                            : undefined
+                      }
                       aria-label={`Keybind for ${sfx.name}`}
                       onClick={() => setListeningForKey(isListening ? null : sfx.id)}
                     >
@@ -468,6 +532,14 @@ export default function SfxPage() {
           <Button variant="text" onClick={() => void refreshAudioOutputs()}>
             Refresh outputs
           </Button>
+
+          <h3 className={layout.group}>Keys</h3>
+          <CheckField
+            label="Work in other apps"
+            tip="Lets pad keys fire while a game or voice chat has focus. Only keys with Ctrl, Alt, or the Windows key, F-keys, and the numpad work outside Overtone, so normal typing is never taken."
+            checked={globalHotkeys}
+            onChange={setGlobalHotkeys}
+          />
         </div>
 
         <Button variant="more" onClick={() => void addSound()}>

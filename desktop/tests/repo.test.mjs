@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 
 // Node's own loader, not Vite's: repo.js is CommonJS.
 const require = createRequire(import.meta.url);
-const { findRepo } = require("../repo.js");
+const { findRepo, missingBaseModels } = require("../repo.js");
 
 const ROOT = path.resolve("/proj");
 const PYTHON = path.join(ROOT, ".venv", "Scripts", "python.exe");
@@ -43,5 +43,39 @@ describe("findRepo", () => {
 
   it("still finds the project when two start paths overlap", () => {
     expect(findRepo([EXE_DIR, path.join(ROOT, "desktop")], onlyProject)).toEqual({ root: ROOT, python: PYTHON });
+  });
+});
+
+describe("missingBaseModels", () => {
+  const HUBERT = path.join(ROOT, "assets", "hubert_base");
+  const RMVPE = path.join(ROOT, "assets", "rmvpe", "rmvpe.pt");
+  const present =
+    (...files) =>
+    (file) =>
+      files.includes(file);
+  const hubertFiles = [path.join(HUBERT, "config.json"), path.join(HUBERT, "pytorch_model.bin")];
+
+  it("passes when HuBERT and RMVPE are both downloaded", () => {
+    expect(missingBaseModels(ROOT, "rmvpe", present(...hubertFiles, RMVPE))).toBeNull();
+  });
+
+  it("accepts safetensors HuBERT weights", () => {
+    expect(missingBaseModels(ROOT, "fcpe", present(path.join(HUBERT, "config.json"), path.join(HUBERT, "model.safetensors")))).toBeNull();
+  });
+
+  it("names HuBERT and the download command when it is missing", () => {
+    const message = missingBaseModels(ROOT, "rmvpe", present(RMVPE));
+    expect(message).toContain("HuBERT model missing");
+    expect(message).toContain('--include "hubert_base/*"');
+  });
+
+  it("treats a HuBERT folder without weights as missing", () => {
+    expect(missingBaseModels(ROOT, "pm", present(path.join(HUBERT, "config.json")))).toContain("HuBERT model missing");
+  });
+
+  it("asks for RMVPE only when it is the chosen pitch tracker", () => {
+    expect(missingBaseModels(ROOT, "rmvpe", present(...hubertFiles))).toContain("RMVPE model missing");
+    expect(missingBaseModels(ROOT, "fcpe", present(...hubertFiles))).toBeNull();
+    expect(missingBaseModels(ROOT, "pm", present(...hubertFiles))).toBeNull();
   });
 });

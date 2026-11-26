@@ -17,19 +17,30 @@ export interface Device {
   note: string;
 }
 
-export interface ExitInfo {
-  code: number | null;
-  expected: boolean;
-}
+/**
+ * What the Python worker is doing, as reported by inference/worker.py:
+ * idle (no model loaded), loading (preparing a model), ready (loaded, not live),
+ * starting (opening the stream, loading first if needed), live (audio flowing).
+ */
+export type WorkerState = "idle" | "loading" | "ready" | "starting" | "live";
+
+/** Removes the listener it came from. Return it from a React effect. */
+export type Unsubscribe = () => void;
 
 export interface RvcBridge {
   assets: () => Promise<Assets>;
   browse: (kind: "model" | "index" | "audio" | "image") => Promise<string | null>;
   devices: () => Promise<{ ok: true; devices: Device[] } | { ok: false; error: string }>;
+  /** Load or update the model without starting or stopping audio. */
+  configure: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   start: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   stop: () => Promise<{ ok: true }>;
-  onLog: (callback: (line: string) => void) => void;
-  onExit: (callback: (info: ExitInfo) => void) => void;
+  /** Replace the system-wide soundboard keys. Reports which ones another app already owns. */
+  setHotkeys: (binds: { id: string; accelerator: string }[]) => Promise<{ registered: string[]; failed: string[] }>;
+  onLog: (callback: (line: string) => void) => Unsubscribe;
+  onState: (callback: (state: WorkerState) => void) => Unsubscribe;
+  /** A system-wide soundboard key was pressed; the payload is the pad id. */
+  onHotkey: (callback: (id: string) => void) => Unsubscribe;
 }
 
 export interface InferenceOpts {
@@ -43,6 +54,7 @@ export interface InferenceOpts {
   blockTime: number;
   crossfadeTime: number;
   extraTime: number;
+  safetyBlocks: number;
   rmsMixRate: number;
   inputDevice: string;
   outputDevice: string;

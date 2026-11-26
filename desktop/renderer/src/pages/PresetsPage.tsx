@@ -2,6 +2,7 @@ import { ChangeEvent, useEffect, useId, useRef, useState } from "react";
 import { bridge, type InferenceOpts } from "../lib/bridge";
 import { cx } from "../lib/cx";
 import { baseName } from "../lib/format";
+import { shrinkImage } from "../lib/images";
 import { clampKey } from "../lib/opts";
 import { presetMonogram } from "../lib/presets";
 import { sanitizeOpts } from "../lib/sanitize";
@@ -31,7 +32,7 @@ const EXTRA_TIME = specOf("extraTime");
 // on the left stage, profile inspector and tuning controls in the right rack,
 // and the shared process log along the bottom.
 export default function PresetsPage() {
-  const { running, logLines, clearLog, opts, presets, activePresetId, createPresetFromOpts, updatePreset, deletePreset, loadPreset } = useSession();
+  const { logLines, clearLog, opts, presets, activePresetId, createPresetFromOpts, updatePreset, deletePreset, loadPreset } = useSession();
 
   const [selectedId, setSelectedId] = useState<string | null>(() => activePresetId ?? presets[0]?.id ?? null);
   const [search, setSearch] = useState("");
@@ -70,8 +71,9 @@ export default function PresetsPage() {
     if (!selectedPreset) return;
     const rvc = bridge();
     if (rvc) {
+      const targetId = selectedPreset.id;
       const dataUrl = await rvc.browse("image");
-      if (dataUrl) updatePreset(selectedPreset.id, { image: dataUrl });
+      if (dataUrl) updatePreset(targetId, { image: await shrinkImage(dataUrl) });
       return;
     }
     imageInputRef.current?.click();
@@ -85,7 +87,7 @@ export default function PresetsPage() {
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
-        updatePreset(targetId, { image: reader.result });
+        void shrinkImage(reader.result).then((image) => updatePreset(targetId, { image }));
       }
     };
     reader.readAsDataURL(file);
@@ -298,7 +300,7 @@ export default function PresetsPage() {
             <Button variant="more" aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}>
               More settings
             </Button>
-            <Button variant="start" running={activePresetId === selectedPreset.id} disabled={running} onClick={() => loadPreset(selectedPreset.id)}>
+            <Button variant="start" running={activePresetId === selectedPreset.id} onClick={() => loadPreset(selectedPreset.id)}>
               {activePresetId === selectedPreset.id ? "Loaded" : "Load preset"}
             </Button>
           </>
@@ -322,7 +324,7 @@ export default function PresetsPage() {
         </pre>
       </section>
 
-      {moreOpen && selectedPreset && <MoreSettings opts={selectedPreset.opts} running={false} onPatch={patchSelectedOpts} onClose={() => setMoreOpen(false)} />}
+      {moreOpen && selectedPreset && <MoreSettings opts={selectedPreset.opts} onPatch={patchSelectedOpts} onClose={() => setMoreOpen(false)} />}
     </div>
   );
 }

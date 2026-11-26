@@ -12,13 +12,6 @@ const require = createRequire(import.meta.url);
 const { buildArgs, parseDevices, defaultOpts } = require("../args.js");
 const OPTIONS = spec.options;
 
-// Rebuild one row of the device table exactly as inference/realtime.py prints it.
-function formatDeviceLine(index, inputs, outputs, rate, host, name, note) {
-  const hostField = host.length < 18 ? host.padEnd(18, " ") : host;
-  const suffix = note ? `  (${note})` : "";
-  return `${String(index).padStart(4, " ")}  ${String(inputs).padStart(3, " ")}  ${String(outputs).padStart(3, " ")}  ${String(rate).padStart(8, " ")}  ${hostField}  ${name}${suffix}`;
-}
-
 const errorFrom = (fn) => {
   try {
     fn();
@@ -31,11 +24,11 @@ const errorFrom = (fn) => {
 describe("buildArgs", () => {
   const base = { ...defaultOpts(), model: "assets/weights/kikiV1.pth" };
 
-  it("builds the minimum command", () => {
+  it("builds only the option flags the worker parses", () => {
     const built = buildArgs(base);
-    expect(built[0]).toBe("-m");
-    expect(built[1]).toBe("inference.realtime");
-    expect(built).toContain("--live");
+    expect(built.slice(0, 2)).toEqual(["--model", "assets/weights/kikiV1.pth"]);
+    expect(built).not.toContain("-m");
+    expect(built).not.toContain("--live");
     expect(built).toContain("--f0");
     expect(built[built.indexOf("--block-time") + 1]).toBe("0.25");
   });
@@ -119,16 +112,16 @@ describe("defaultOpts", () => {
 });
 
 describe("parseDevices", () => {
-  it("skips the header and reads both columns", () => {
-    const table = [
-      " idx   in  out      rate  host                name",
-      formatDeviceLine(0, 2, 0, 48000, "Windows WASAPI", "Microphone (Realtek)", "default input"),
-      formatDeviceLine(1, 0, 2, 48000, "Windows DirectSound", "Speakers", "default output"),
-      "",
-    ].join("\n");
-    const devices = parseDevices(table);
+  // Shaped exactly like `python -m inference.realtime --list-devices --json`.
+  const listing = JSON.stringify([
+    { index: 0, inputs: 2, outputs: 0, rate: 48000.0, host: "Windows WASAPI", name: "Microphone (Realtek)", note: "default input" },
+    { index: 1, inputs: 0, outputs: 2, rate: 48000.0, host: "Windows DirectSound", name: "Speakers", note: "default output" },
+  ]);
+
+  it("reads every device and its default marks", () => {
+    const devices = parseDevices(listing);
     expect(devices).toHaveLength(2);
-    expect(devices[0]).toMatchObject({
+    expect(devices[0]).toEqual({
       index: 0,
       inputs: 2,
       outputs: 0,
@@ -140,15 +133,44 @@ describe("parseDevices", () => {
     expect(devices[1]).toMatchObject({ index: 1, inputs: 0, outputs: 2, host: "Windows DirectSound", note: "default output" });
   });
 
-  it("rejoins a device name that wrapped onto the next line", () => {
-    const wrapped = parseDevices(`${formatDeviceLine(4, 1, 0, 8000, "Windows WDM-KS", "Headset (SOUNDPEATS", "")}\nGamer)\n`);
-    expect(wrapped).toHaveLength(1);
-    expect(wrapped[0].name).toContain("Gamer");
-    expect(wrapped[0].host).toBe("Windows WDM-KS");
+  it("keeps names that contain brackets and double spaces intact", () => {
+    const [device] = parseDevices(
+      JSON.stringify([{ index: 4, inputs: 1, outputs: 0, rate: 8000, host: "Windows WDM-KS", name: "Headset  (SOUNDPEATS Gamer)", note: "" }]),
+    );
+    expect(device.name).toBe("Headset  (SOUNDPEATS Gamer)");
   });
 
-  it("returns nothing for text with no table", () => {
-    expect(parseDevices("")).toEqual([]);
-    expect(parseDevices("error: something went wrong")).toEqual([]);
+  it("drops entries without an index or a name", () => {
+    expect(parseDevices(JSON.stringify([{ name: "no index" }, { index: 2 }, null]))).toEqual([]);
+  });
+
+  it("returns nothing for an empty list", () => {
+    expect(parseDevices("[]")).toEqual([]);
+  });
+
+  it("throws on output that is not a JSON list", () => {
+    expect(() => parseDevices("")).toThrow("Could not read the device list");
+    expect(() => parseDevices("Traceback (most recent call last):")).toThrow("Could not read the device list");
+    expect(() => parseDevices('{"index": 0}')).toThrow("Could not read the device list");
+  });
+});
+
+describe("the apply field in the option spec", () => {
+  // inference/worker.py reads this to decide what a change costs while the app runs.
+  const COSTS = ["live", "stream", "converter", "model"];
+
+  it("gives every option a known cost", () => {
+    for (const [key, option] of Object.entries(OPTIONS)) expect(COSTS, key).toContain(option.apply);
+  });
+
+  it("reloads only for a new model", () => {
+    const reloads = Object.entries(OPTIONS)
+      .filter(([, option]) => option.apply === "model")
+      .map(([key]) => key);
+    expect(reloads).toEqual(["model"]);
+  });
+
+  it("reopens the stream for every device setting", () => {
+    for (const key of ["inputDevice", "outputDevice", "hostApi", "latency", "inputChannels", "outputChannels"]) expect(OPTIONS[key].apply, key).toBe("stream");
   });
 });

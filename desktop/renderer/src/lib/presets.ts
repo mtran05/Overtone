@@ -98,11 +98,14 @@ export function loadStoredPresets(): Preset[] {
   }
 }
 
-export function saveStoredPresets(presets: Preset[]): void {
+// Returns false when the presets could not be written, usually because
+// localStorage is full. The caller tells the user; this only reports it.
+export function saveStoredPresets(presets: Preset[]): boolean {
   try {
     localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(presets));
+    return true;
   } catch {
-    // Ignore storage quota errors in restricted environments.
+    return false;
   }
 }
 

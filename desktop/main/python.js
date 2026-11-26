@@ -1,12 +1,12 @@
 "use strict";
 
-// Everything that runs or talks to Python: short one-shot commands (device
-// listing) and the long-lived live converter.
+// Running Python for one-shot commands (device listing), and sending events to
+// the page. The long-lived live converter is in worker.js.
 
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
-const { getChild, getWin, isStopping, setChild, setStopping } = require("./state");
+const { getWin } = require("./state");
 
 // Force UTF-8 and unbuffered logs so lines reach the window as they are printed.
 function pythonEnv() {
@@ -55,29 +55,4 @@ function emit(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
-// Forward the live process stdout and stderr to the page, one line at a time.
-// `expected` is true when the user pressed Stop, so a normal exit is not an error.
-function attachLogs(proc) {
-  let buffer = "";
-  const onData = (chunk) => {
-    buffer += chunk.toString("utf8");
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop();
-    for (const line of lines) if (line) emit("log", line);
-  };
-  proc.stdout.on("data", onData);
-  proc.stderr.on("data", onData);
-  proc.on("exit", (code) => {
-    if (buffer.trim()) emit("log", buffer.trim());
-    buffer = "";
-    const expected = isStopping();
-    setStopping(false);
-    if (getChild() === proc) setChild(null);
-    emit("exit", { code, expected });
-  });
-  proc.on("error", (error) => {
-    emit("log", error.message);
-  });
-}
-
-module.exports = { filesIn, pythonEnv, runPython, attachLogs, emit };
+module.exports = { filesIn, pythonEnv, runPython, emit };

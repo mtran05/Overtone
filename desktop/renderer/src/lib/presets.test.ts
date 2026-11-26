@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultOpts } from "./specs";
-import { createPreset, derivePresetName, presetMonogram, upsertPresetOnLive } from "./presets";
+import { createPreset, derivePresetName, presetMonogram, saveStoredPresets, upsertPresetOnLive } from "./presets";
 
 describe("presets", () => {
   it("derives a readable profile name from a model path", () => {
@@ -46,5 +46,27 @@ describe("presets", () => {
     expect(result.presets[0].name).toBe("kiki");
     expect(result.presets[0].opts.blockTime).toBe(0.3);
     expect(result.activePresetId).toBe(result.presets[0].id);
+  });
+});
+
+describe("saveStoredPresets", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports success when the presets were written", () => {
+    const written: Record<string, string> = {};
+    vi.stubGlobal("localStorage", { setItem: (key: string, value: string) => (written[key] = value) });
+    expect(saveStoredPresets([])).toBe(true);
+    expect(Object.values(written)).toEqual(["[]"]);
+  });
+
+  it("reports failure when storage is full", () => {
+    vi.stubGlobal("localStorage", {
+      setItem: () => {
+        throw new DOMException("quota", "QuotaExceededError");
+      },
+    });
+    expect(saveStoredPresets([])).toBe(false);
   });
 });

@@ -10,15 +10,18 @@ import { boundsOf, defaultOpts, numberKeys, type NumberOptKey } from "./specs";
 // pair, where it decides which bound gives way: lowering the floor pushes the
 // ceiling up, and raising the ceiling pulls the floor down.
 export function sanitizeOpts(opts: InferenceOpts, edited?: NumberOptKey): InferenceOpts {
-  const next = { ...opts };
+  // Saved presets can predate an option or be damaged. Start from the spec
+  // defaults so a missing field is filled in instead of throwing, which would
+  // make loadStoredPresets drop every preset and the next save erase them.
+  const next = { ...defaultOpts, ...opts };
 
   for (const key of numberKeys) {
     const spec = defaultOpts[key];
-    next[key] = legalNumber(Number(opts[key]), { ...boundsOf(key), fallback: spec as number });
+    next[key] = legalNumber(Number(next[key]), { ...boundsOf(key), fallback: spec as number });
   }
 
-  next.latency = legalLatency(opts.latency);
-  next.hostApi = opts.hostApi.trim();
+  next.latency = legalLatency(String(next.latency ?? ""));
+  next.hostApi = String(next.hostApi ?? "").trim();
 
   if (next.f0Max <= next.f0Min) {
     if (edited === "f0Max") {
