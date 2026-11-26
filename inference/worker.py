@@ -33,7 +33,7 @@ import threading
 
 from inference.live import LiveStream, resolve_stream
 from inference.opts import OPT_SPEC
-from inference.realtime import build_converter, build_parser, build_rvc, check_args, pitch_settings
+from inference.realtime import build_converter, build_parser, build_rvc, check_args, pitch_settings, setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ def main():
     events = sys.stdout
     # Libraries sometimes print. Send that to stderr so stdout stays pure events.
     sys.stdout = sys.stderr
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+    setup_logging()
     lock = threading.Lock()
 
     def emit(event):

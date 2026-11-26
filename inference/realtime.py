@@ -16,7 +16,9 @@ the checks, and the model-building helpers defined here.
 
 import argparse
 import logging
+import sys
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +32,19 @@ from inference.opts import OPT_SPEC, PitchSettings
 logger = logging.getLogger(__name__)
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+
+def setup_logging():
+    """Log to stderr, without the harmless start-up noise that reads like a crash.
+
+    faiss tries each CPU-specific build in turn and logs every miss as a
+    ModuleNotFoundError at INFO level, and torch warns that the weight_norm
+    used by the upstream synthesizer in module/ is deprecated. Neither is a
+    problem, and in the desktop app's log both look like errors.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+    logging.getLogger("faiss.loader").setLevel(logging.WARNING)
+    warnings.filterwarnings("ignore", message="`torch.nn.utils.weight_norm` is deprecated", category=FutureWarning)
 
 
 def pitch_settings(args):
@@ -200,7 +215,7 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    setup_logging()
     if args.list_devices:
         list_devices(as_json=args.json)
         return

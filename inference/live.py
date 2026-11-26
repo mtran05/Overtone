@@ -167,9 +167,27 @@ class StreamConfig:
     extra_settings: object
 
 
+def refresh_devices(sd):
+    """Re-read the system's audio devices.
+
+    PortAudio lists devices once, when sounddevice is imported, and never
+    again. The desktop worker lives for the whole session, so a mic plugged in
+    after it started would be missing, and device numbers can shift, which
+    could open the wrong device. Restarting PortAudio re-lists them. It must
+    only run while no stream is open.
+    """
+    sd._terminate()
+    sd._initialize()
+
+
 def resolve_stream(args):
-    """Turn the device options into a StreamConfig, or raise SystemExit with the reason."""
+    """Turn the device options into a StreamConfig, or raise SystemExit with the reason.
+
+    Callers must have no stream open: the device list is refreshed first, so
+    the numbers match a --list-devices run made just before.
+    """
     sd = import_sounddevice()
+    refresh_devices(sd)
     input_device = resolve_device(args.input_device, "input", args.host_api)
     output_device = resolve_device(args.output_device, "output", args.host_api)
     extra_settings = wasapi_settings(sd, args, input_device, output_device)
