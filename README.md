@@ -18,11 +18,16 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 
 [Features](#features) ·
+[Screenshots](#screenshots) ·
 [Quick start](#quick-start) ·
 [Usage](#usage) ·
 [Desktop app](#desktop-app) ·
 [How it works](#how-it-works) ·
 [Development](#development)
+
+<br />
+
+<img src="docs/screenshots/live.png" alt="Overtone's Live page while converting: pitch dial at +5 semitones, the RMVPE pitch tracker, the kikiV1 voice model and index, and the status lamp lit as Live" width="860" />
 
 </div>
 
@@ -31,6 +36,7 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 ## Table of contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
   - [1. Create a virtual environment](#1-create-a-virtual-environment)
@@ -67,6 +73,22 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
   - **Presets:** saved voice profiles with artwork, quick switching and last-used tracking.
   - **SFX:** a soundboard with per-pad keybinds and volume, a master volume, and optional routing to a second output device (for example a virtual cable into Discord or OBS). Keybinds can also work while another app, such as a game, has focus.
 - **One source of truth for settings.** Every option is defined once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json) and shared by the Python CLI, the Electron main process and the React UI.
+
+## Screenshots
+
+The **Live** page is shown at the top: pitch, formant and pitch tracker on the stage, and the voice and audio devices in the side panel. All of them can change while you're live.
+
+<!-- 390 px is the widest two images can be side by side: GitHub's README column
+     is about 838 px, and each cell adds 26 px of padding plus borders. Both
+     columns stay equal because every caption line is narrower than its image;
+     keep it so when editing the captions. -->
+
+| Presets | Soundboard |
+| :-----: | :--------: |
+| <img src="docs/screenshots/presets.png" alt="Presets page: three saved voice profiles with their block size, pitch, tracker and index rate, and the active profile's settings in the side panel" width="390" /> | <img src="docs/screenshots/sfx.png" alt="SFX page: six soundboard pads with keybinds such as Ctrl+1, F9 and num1, each with a volume slider, plus master volume, a secondary output and the Work in other apps option" width="390" /> |
+| Saved voice profiles. Loading one<br />preloads its model, so Go live<br />starts instantly. | Pads with their own volume and<br />keybinds. A lit dot marks keys<br />that also work in other apps. |
+
+The screenshots use sample voice models. Your own models appear in the same places.
 
 ## Requirements
 
