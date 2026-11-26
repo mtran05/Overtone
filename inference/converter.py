@@ -20,40 +20,53 @@ from inference.rtrvc import RVC
 logger = logging.getLogger(__name__)
 
 
+_DEVICE = None
+
+
+def load_rvc(model_path, index_path, index_rate, key, formant, settings, last_rvc=None):
+    """Load a voice model, reusing HuBERT and the pitch models from last_rvc.
+
+    The device is detected once per process. Detection is expensive, so it
+    runs here, where the device is first needed, rather than at import time.
+    """
+    global _DEVICE
+    if _DEVICE is None:
+        _DEVICE = detect_device()
+    return RVC(
+        key,
+        formant,
+        str(model_path),
+        str(index_path) if index_path else "",
+        index_rate if index_path else 0.0,
+        _DEVICE,
+        last_rvc=last_rvc,
+        settings=settings,
+    )
+
+
 class RealtimeConverter:
     """Stream fixed-size blocks through the real-time RVC model."""
 
     def __init__(
         self,
-        model_path,
-        index_path,
-        index_rate,
-        key,
-        formant,
+        rvc,
         f0_method,
         sample_rate,
         block_time=0.25,
         crossfade_time=0.05,
         extra_time=2.5,
         rms_mix_rate=0.0,
-        settings=None,
     ):
-        """Load the voice model and size the overlap buffers from the block settings."""
+        """Size the overlap buffers from the block settings around an already loaded model.
+
+        Building one is cheap next to loading the model, so a change of block
+        size makes a new converter around the same RVC.
+        """
         self.f0_method = f0_method
         self.rms_mix_rate = rms_mix_rate
-        # Detection is expensive and runs once, where the device is first needed,
-        # rather than at import time.
-        self.config = detect_device()
+        self.rvc = rvc
+        self.config = rvc.config
         self.device = self.config.device
-        self.rvc = RVC(
-            key,
-            formant,
-            str(model_path),
-            str(index_path) if index_path else "",
-            index_rate,
-            self.config,
-            settings=settings,
-        )
         self.sample_rate = int(sample_rate or self.rvc.tgt_sr)
         # zc is 10 ms. Every block length is a multiple of that so pitch frames line up.
         self.zc = self.sample_rate // 100
@@ -107,7 +120,7 @@ class RealtimeConverter:
             self.output_resampler = None
         logger.info(
             "Real-time converter ready: model=%s, %d Hz, block=%d samples, device=%s",
-            model_path,
+            rvc.pth_path,
             self.sample_rate,
             self.block_frame,
             self.device,

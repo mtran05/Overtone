@@ -24,11 +24,11 @@ const errorFrom = (fn) => {
 describe("buildArgs", () => {
   const base = { ...defaultOpts(), model: "assets/weights/kikiV1.pth" };
 
-  it("builds the minimum command", () => {
+  it("builds only the option flags the worker parses", () => {
     const built = buildArgs(base);
-    expect(built[0]).toBe("-m");
-    expect(built[1]).toBe("inference.realtime");
-    expect(built).toContain("--live");
+    expect(built.slice(0, 2)).toEqual(["--model", "assets/weights/kikiV1.pth"]);
+    expect(built).not.toContain("-m");
+    expect(built).not.toContain("--live");
     expect(built).toContain("--f0");
     expect(built[built.indexOf("--block-time") + 1]).toBe("0.25");
   });
@@ -152,5 +152,25 @@ describe("parseDevices", () => {
     expect(() => parseDevices("")).toThrow("Could not read the device list");
     expect(() => parseDevices("Traceback (most recent call last):")).toThrow("Could not read the device list");
     expect(() => parseDevices('{"index": 0}')).toThrow("Could not read the device list");
+  });
+});
+
+describe("the apply field in the option spec", () => {
+  // inference/worker.py reads this to decide what a change costs while the app runs.
+  const COSTS = ["live", "stream", "converter", "model"];
+
+  it("gives every option a known cost", () => {
+    for (const [key, option] of Object.entries(OPTIONS)) expect(COSTS, key).toContain(option.apply);
+  });
+
+  it("reloads only for a new model", () => {
+    const reloads = Object.entries(OPTIONS)
+      .filter(([, option]) => option.apply === "model")
+      .map(([key]) => key);
+    expect(reloads).toEqual(["model"]);
+  });
+
+  it("reopens the stream for every device setting", () => {
+    for (const key of ["inputDevice", "outputDevice", "hostApi", "latency", "inputChannels", "outputChannels"]) expect(OPTIONS[key].apply, key).toBe("stream");
   });
 });

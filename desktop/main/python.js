@@ -1,20 +1,16 @@
 "use strict";
 
-// Everything that runs or talks to Python: short one-shot commands (device
-// listing) and the long-lived live converter.
+// Running Python for one-shot commands (device listing), and sending events to
+// the page. The long-lived live converter is in worker.js.
 
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
-const { getChild, getWin, isStopping, setChild, setStopping } = require("./state");
-
-// inference/realtime.py prints this exact line once the live stream is open.
-// It only does so when OVERTONE_EVENTS=1, so terminal users never see it.
-const READY_LINE = "@overtone ready";
+const { getWin } = require("./state");
 
 // Force UTF-8 and unbuffered logs so lines reach the window as they are printed.
 function pythonEnv() {
-  return { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", OVERTONE_EVENTS: "1" };
+  return { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" };
 }
 
 // Sorted full paths of files in dir that end with ext (string or string[]). Empty when the folder is missing.
@@ -59,32 +55,4 @@ function emit(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
-// Forward the live process stdout and stderr to the page, one line at a time.
-// `expected` is true when the user pressed Stop, so a normal exit is not an error.
-function attachLogs(proc) {
-  let buffer = "";
-  const onData = (chunk) => {
-    buffer += chunk.toString("utf8");
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop();
-    for (const line of lines) {
-      if (line === READY_LINE) emit("ready");
-      else if (line) emit("log", line);
-    }
-  };
-  proc.stdout.on("data", onData);
-  proc.stderr.on("data", onData);
-  proc.on("exit", (code) => {
-    if (buffer.trim()) emit("log", buffer.trim());
-    buffer = "";
-    const expected = isStopping();
-    setStopping(false);
-    if (getChild() === proc) setChild(null);
-    emit("exit", { code, expected });
-  });
-  proc.on("error", (error) => {
-    emit("log", error.message);
-  });
-}
-
-module.exports = { READY_LINE, filesIn, pythonEnv, runPython, attachLogs, emit };
+module.exports = { filesIn, pythonEnv, runPython, emit };

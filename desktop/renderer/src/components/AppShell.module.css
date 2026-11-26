@@ -61,6 +61,8 @@
 
 .desk[data-status="live"] .status,
 .desk[data-status="starting"] .status,
+.desk[data-status="loading"] .status,
+.desk[data-status="ready"] .status,
 .desk[data-status="stopped"] .status {
   color: var(--filament-ink);
 }
@@ -70,7 +72,14 @@
   box-shadow: 0 0 16px rgba(226, 90, 50, 0.72);
 }
 
-/* Warming up: the filament glows dimly and pulses until audio is flowing. */
+/* Ready: a voice is loaded and Go live will be near-instant. Lit, but not glowing. */
+.desk[data-status="ready"] .status::before {
+  background: radial-gradient(circle at 35% 30%, #c98a6a, #8a3a22 52%, #3a1a10 85%);
+  box-shadow: 0 0 6px rgba(226, 90, 50, 0.3);
+}
+
+/* Loading a voice or warming up: the filament glows dimly and pulses. */
+.desk[data-status="loading"] .status::before,
 .desk[data-status="starting"] .status::before {
   background: radial-gradient(circle at 35% 30%, #c98a6a, #8a3a22 52%, #3a1a10 85%);
   animation: warming 1.2s ease-in-out infinite alternate;
@@ -86,6 +95,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .desk[data-status="loading"] .status::before,
   .desk[data-status="starting"] .status::before {
     animation: none;
   }

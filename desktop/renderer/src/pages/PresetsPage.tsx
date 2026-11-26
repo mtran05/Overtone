@@ -32,7 +32,7 @@ const EXTRA_TIME = specOf("extraTime");
 // on the left stage, profile inspector and tuning controls in the right rack,
 // and the shared process log along the bottom.
 export default function PresetsPage() {
-  const { running, logLines, clearLog, opts, presets, activePresetId, createPresetFromOpts, updatePreset, deletePreset, loadPreset } = useSession();
+  const { logLines, clearLog, opts, presets, activePresetId, createPresetFromOpts, updatePreset, deletePreset, loadPreset } = useSession();
 
   const [selectedId, setSelectedId] = useState<string | null>(() => activePresetId ?? presets[0]?.id ?? null);
   const [search, setSearch] = useState("");
@@ -300,7 +300,7 @@ export default function PresetsPage() {
             <Button variant="more" aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}>
               More settings
             </Button>
-            <Button variant="start" running={activePresetId === selectedPreset.id} disabled={running} onClick={() => loadPreset(selectedPreset.id)}>
+            <Button variant="start" running={activePresetId === selectedPreset.id} onClick={() => loadPreset(selectedPreset.id)}>
               {activePresetId === selectedPreset.id ? "Loaded" : "Load preset"}
             </Button>
           </>
@@ -324,7 +324,7 @@ export default function PresetsPage() {
         </pre>
       </section>
 
-      {moreOpen && selectedPreset && <MoreSettings opts={selectedPreset.opts} running={false} onPatch={patchSelectedOpts} onClose={() => setMoreOpen(false)} />}
+      {moreOpen && selectedPreset && <MoreSettings opts={selectedPreset.opts} onPatch={patchSelectedOpts} onClose={() => setMoreOpen(false)} />}
     </div>
   );
 }

@@ -33,7 +33,7 @@ const OUTPUT_DEVICE = specOf("outputDevice");
 // The live page: pitch controls on the left, voice and device settings in the
 // right rack, and the Python process log along the bottom.
 export default function LivePage() {
-  const { running, logLines, pushLog, clearLog, setLive, devices, scan, refreshDevices, opts, setOpts, recordLivePreset } = useSession();
+  const { running, logLines, clearLog, startLive, stopLive, devices, scan, refreshDevices, opts, setOpts, recordLivePreset } = useSession();
   const [models, setModels] = useState<string[]>([]);
   const [indices, setIndices] = useState<string[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -60,24 +60,18 @@ export default function LivePage() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logLines]);
 
-  // Toggle "Go live / Stop". A running process is stopped; otherwise the form is
-  // sanitized and handed to main.js, which spawns inference/realtime.py.
+  // Toggle "Go live / Stop". Stop closes the stream but keeps the model loaded;
+  // Go live sends the sanitized form to the worker, which is usually warm already.
+  // The lamp follows the worker's state events, not these calls.
   const goLive = async () => {
-    const rvc = bridge();
-    if (!rvc) return;
     if (running) {
-      await rvc.stop();
+      await stopLive();
       return;
     }
     const cleaned = sanitizeOpts(opts);
     setOpts(cleaned);
     recordLivePreset(cleaned);
-    const result = await rvc.start(cleaned);
-    if (!result.ok) {
-      pushLog(result.error);
-      return;
-    }
-    setLive(true);
+    await startLive(cleaned);
   };
 
   return (
@@ -99,7 +93,7 @@ export default function LivePage() {
               min={KEY_RANGE.min}
               max={KEY_RANGE.max}
               step={1}
-              disabled={running}
+
               ariaLabel="Pitch scale"
               onChange={(key) => patch({ key: clampKey(key) })}
             />
@@ -110,7 +104,7 @@ export default function LivePage() {
                 step={1}
                 min={KEY_RANGE.min}
                 max={KEY_RANGE.max}
-                disabled={running}
+
                 ariaLabel="Pitch in semitones"
                 onChange={(key) => patch({ key: clampKey(key) })}
               />
@@ -121,12 +115,12 @@ export default function LivePage() {
 
         <fieldset className={styles.tracker}>
           <LabelRow as="legend" id={trackerLabelId} label={F0.label} tip={F0.tip} />
-          <RadioChoices id={trackerLabelId} name="f0" value={opts.f0} options={F0_METHODS} disabled={running} onChange={(f0) => patch({ f0 })} />
+          <RadioChoices id={trackerLabelId} name="f0" value={opts.f0} options={F0_METHODS} onChange={(f0) => patch({ f0 })} />
         </fieldset>
 
         <div className={styles.pair}>
           <Field label={FORMANT.label} tip={FORMANT.tip}>
-            <NudgeNumber value={opts.formant} step={FORMANT.step} disabled={running} onChange={(formant) => patch({ formant })} />
+            <NudgeNumber value={opts.formant} step={FORMANT.step} onChange={(formant) => patch({ formant })} />
           </Field>
           <Field label={LOUDNESS.label} tip={LOUDNESS.tip} extra={<output>{opts.rmsMixRate.toFixed(2)}</output>}>
             <RangeField
@@ -134,7 +128,7 @@ export default function LivePage() {
               min={LOUDNESS_RANGE.min}
               max={LOUDNESS_RANGE.max}
               step={LOUDNESS.step!}
-              disabled={running}
+
               onChange={(rmsMixRate) => patch({ rmsMixRate })}
             />
           </Field>
@@ -151,7 +145,7 @@ export default function LivePage() {
             placeholder="Choose a model"
             value={opts.model}
             options={models}
-            disabled={running}
+
             onBrowse={(file) => setModels((list) => (list.includes(file) ? list : [...list, file]))}
             onChange={(model) => patch({ model })}
           />
@@ -162,7 +156,7 @@ export default function LivePage() {
             placeholder="None"
             value={opts.index}
             options={indices}
-            disabled={running}
+
             onBrowse={(file) => setIndices((list) => (list.includes(file) ? list : [...list, file]))}
             onChange={(index) => patch({ index })}
           />
@@ -172,27 +166,27 @@ export default function LivePage() {
               min={INDEX_RATE_RANGE.min}
               max={INDEX_RATE_RANGE.max}
               step={INDEX_RATE.step!}
-              disabled={running}
+
               onChange={(indexRate) => patch({ indexRate })}
             />
           </Field>
 
           <h3 className={styles.group}>Audio</h3>
           <Field label={INPUT_DEVICE.label} tip={INPUT_DEVICE.tip}>
-            <DeviceSelect devices={devices} channel="inputs" value={opts.inputDevice} disabled={running} onChange={(inputDevice) => patch({ inputDevice })} />
+            <DeviceSelect devices={devices} channel="inputs" value={opts.inputDevice} onChange={(inputDevice) => patch({ inputDevice })} />
           </Field>
           <Field label={OUTPUT_DEVICE.label} tip={OUTPUT_DEVICE.tip}>
             <DeviceSelect
               devices={devices}
               channel="outputs"
               value={opts.outputDevice}
-              disabled={running}
+
               onChange={(outputDevice) => patch({ outputDevice })}
             />
           </Field>
           {scan.kind === "ready" && <p className={styles.deviceCount}>{`${scan.mics} microphones, ${scan.speakers} speakers`}</p>}
           {scan.kind === "error" && <p className={styles.deviceError}>{scan.message}</p>}
-          <Button variant="text" disabled={running} onClick={() => void refreshDevices()}>
+          <Button variant="text" onClick={() => void refreshDevices()}>
             Refresh devices
           </Button>
         </div>
@@ -217,7 +211,7 @@ export default function LivePage() {
         </pre>
       </section>
 
-      {moreOpen && <MoreSettings opts={opts} running={running} onPatch={patch} onClose={() => setMoreOpen(false)} />}
+      {moreOpen && <MoreSettings opts={opts} onPatch={patch} onClose={() => setMoreOpen(false)} />}
     </div>
   );
 }

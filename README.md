@@ -62,7 +62,7 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 - **CUDA graph acceleration.** Fixed-shape GPU work (HuBERT, pitch, synthesizer) is recorded once and replayed on later blocks to cut kernel launch overhead.
 - **Flexible audio I/O.** Pick devices by index or name, filter by host API, and use WASAPI exclusive mode for the lowest latency on Windows.
 - **Desktop app.** An Electron + React interface with:
-  - **Live:** model, index, device and pitch controls with a streaming process log.
+  - **Live:** model, index, device and pitch controls with a streaming process log. The model preloads as soon as you pick it, so going live takes under a second, and every setting can change while you're live.
   - **Presets:** saved voice profiles with artwork, quick switching and last-used tracking.
   - **SFX:** a soundboard with per-pad keybinds and volume, a master volume, and optional routing to a second output device (for example a virtual cable into Discord or OBS).
 - **One source of truth for settings.** Every option is defined once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json) and shared by the Python CLI, the Electron main process and the React UI.
@@ -191,7 +191,7 @@ python -m inference.realtime --model assets/weights/myvoice.pth --live --input-d
 
 ## Desktop app
 
-The desktop app runs the same converter as `inference.realtime --live` and exposes every option through a graphical interface. It drives the Python environment you set up in the [quick start](#quick-start); it does not install Python or download models for you.
+The desktop app runs the same converter as `inference.realtime --live` and exposes every option through a graphical interface. It keeps one Python process running for the whole session, so a voice loads once and stays loaded. It drives the Python environment you set up in the [quick start](#quick-start); it does not install Python or download models for you.
 
 ### Run from source
 
@@ -242,14 +242,37 @@ flowchart LR
 
 Before the audio stream opens, the converter runs two silent warm-up blocks. This loads the pitch model and records the CUDA graphs, so the first real blocks don't drop out.
 
-In the desktop app, the Electron main process spawns this pipeline as a Python child process and streams its log back to the window over IPC. The status lamp shows **Starting…** while the model loads and warms up, and switches to **Live** once Python reports that audio is flowing. Pressing Stop ends the process.
+### The desktop worker
+
+The desktop app doesn't start a new Python process each time you go live. Electron starts one `python -m inference.worker` process and keeps it. It sends that process JSON commands (`configure`, `start`, `stop`) on stdin, and reads back JSON state events on stdout.
+
+| Lamp              | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| **Loading voice…** | A model was picked; it's loading and warming up in the background |
+| **Ready**         | Loaded and warm; **Go live** opens the stream in under a second |
+| **Starting…**     | Opening the stream, or briefly restarting it after a change    |
+| **Live**          | Audio is flowing                                               |
+| **Stopped**       | Audio stopped without you pressing Stop, for example a device error |
+
+Each option in [`opts-spec.json`](desktop/shared/opts-spec.json) has an `apply` field that says what changing it costs while you're live:
+
+| `apply`     | Options                                              | What happens                                                                  |
+| ----------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `live`      | pitch, formant, index and index rate, gains, thresholds | Used from the next audio block, with no gap                                 |
+| `stream`    | devices, host API, channels, latency, WASAPI         | The audio devices reopen (well under a second); the model stays loaded        |
+| `converter` | block, crossfade and context length, sample rate, pitch tracker | The converter is rebuilt and warmed up (about a second)            |
+| `model`     | the voice model                                      | The voice reloads (about a second); HuBERT and the pitch models stay loaded   |
+
+Pressing Stop closes the stream but keeps the model loaded. If Electron exits or crashes, the worker sees its stdin close and exits too, so it never keeps holding the microphone or the GPU.
 
 ## Project structure
 
 ```
 .
 ├── inference/                 Python inference package
-│   ├── realtime.py            CLI entry point: mic capture, file conversion, device listing
+│   ├── realtime.py            CLI entry point: file conversion, live mode, device listing
+│   ├── worker.py              long-running process the desktop app drives over stdin/stdout
+│   ├── live.py                audio devices and the live microphone-to-speaker stream
 │   ├── converter.py           block buffering, warm-up and SOLA crossfade
 │   ├── rtrvc.py               streaming RVC model (HuBERT, index, pitch cache, synthesizer)
 │   ├── device.py              GPU and precision selection
@@ -264,7 +287,7 @@ In the desktop app, the Electron main process spawns this pipeline as a Python c
 │   ├── preload.js             the only API exposed to the page
 │   ├── args.js                builds CLI arguments for inference.realtime
 │   ├── repo.js                locates the project folder from the exe
-│   ├── main/                  project locator, Python process control, IPC handlers
+│   ├── main/                  project locator, the Python worker, IPC handlers
 │   ├── shared/opts-spec.json  single source of truth for every option
 │   ├── tests/                 main-process tests
 │   └── renderer/              React + TypeScript UI (Vite)
@@ -321,7 +344,7 @@ $env:VITE_DEV_SERVER_URL="http://localhost:5173"; npm start
 
 Every option is described once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json): its flag, type, default, range, UI label, tooltip and CLI help text. That file feeds `inference/realtime.py`'s argument parser, `desktop/args.js` and the renderer's form controls.
 
-1. Add the option to `opts-spec.json`. It appears in `python -m inference.realtime --help` and in the app's **More settings** sheet.
+1. Add the option to `opts-spec.json`. It appears in `python -m inference.realtime --help` and in the app's **More settings** sheet. Give it an `apply` value (see [the desktop worker](#the-desktop-worker)). If it can change while live, make the worker apply it in `Worker._apply` in [`inference/worker.py`](inference/worker.py).
 2. Add its type to `InferenceOpts` in [`desktop/renderer/src/lib/bridge.ts`](desktop/renderer/src/lib/bridge.ts).
 3. Read it in the Python code where it is needed.
 

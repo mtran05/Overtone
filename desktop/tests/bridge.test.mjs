@@ -3,7 +3,7 @@
 // test reads both files and compares them directly.
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,15 +41,20 @@ describe("the preload bridge", () => {
   });
 
   it("listens only on channels the main process actually emits", () => {
-    const python = readFileSync(path.join(desktop, "main", "python.js"), "utf8");
-    const emitted = new Set([...python.matchAll(/emit\("(\w+)"/g)].map((match) => match[1]));
+    // emit() in python.js, and sendEvent() in worker.js, which defaults to it.
+    const mainDir = path.join(desktop, "main");
+    const source = readdirSync(mainDir)
+      .filter((name) => name.endsWith(".js"))
+      .map((name) => readFileSync(path.join(mainDir, name), "utf8"))
+      .join("\n");
+    const emitted = new Set([...source.matchAll(/(?:emit|sendEvent)\("(\w+)"/g)].map((match) => match[1]));
     const listened = [...preload.matchAll(/listen\("(\w+)"/g)].map((match) => match[1]);
-    expect(listened.sort()).toEqual(["exit", "log", "ready"]);
+    expect(listened.sort()).toEqual(["log", "state"]);
     for (const channel of listened) expect(emitted.has(channel), channel).toBe(true);
   });
 
   it("returns an unsubscribe function from every listener", () => {
     expect(preload).toContain("return () => ipcRenderer.removeListener(channel, listener);");
-    for (const name of ["onLog", "onReady", "onExit"]) expect(interfaceBody()).toMatch(new RegExp(`${name}: \\(callback: [^\\n]*\\) => Unsubscribe;`));
+    for (const name of ["onLog", "onState"]) expect(interfaceBody()).toMatch(new RegExp(`${name}: \\(callback: [^\\n]*\\) => Unsubscribe;`));
   });
 });

@@ -16,9 +16,9 @@ contextBridge.exposeInMainWorld("rvc", {
   assets: () => ipcRenderer.invoke("assets"),
   browse: (kind) => ipcRenderer.invoke("browse", kind),
   devices: () => ipcRenderer.invoke("devices"),
+  configure: (opts) => ipcRenderer.invoke("configure", opts),
   start: (opts) => ipcRenderer.invoke("start", opts),
   stop: () => ipcRenderer.invoke("stop"),
   onLog: (callback) => listen("log", (line) => callback(line)),
-  onReady: (callback) => listen("ready", () => callback()),
-  onExit: (callback) => listen("exit", (info) => callback(info)),
+  onState: (callback) => listen("state", (state) => callback(state)),
 });

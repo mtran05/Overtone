@@ -1,6 +1,7 @@
 "use strict";
 
-// Build the argument list for `python -m inference.realtime --live`.
+// Build the option flags sent to `python -m inference.worker`, which parses
+// them with the same parser as `python -m inference.realtime`.
 // parseDevices reads the JSON printed by --list-devices --json.
 // Every flag, default, and choice comes from shared/opts-spec.json, which is
 // also read by the renderer and by inference/realtime.py.
@@ -44,7 +45,7 @@ function buildArgs(opts) {
   }
   if (numbers.indexNeighbors < 1) throw new Error("Index neighbors must be at least 1");
 
-  const args = ["-m", "inference.realtime", "--live", "--model", String(opts.model), "--f0", opts.f0];
+  const args = ["--model", String(opts.model), "--f0", opts.f0];
   if (opts.index) args.push(SPEC.index.flag, String(opts.index));
   if (opts.inputDevice) args.push(SPEC.inputDevice.flag, String(opts.inputDevice));
   if (opts.outputDevice) args.push(SPEC.outputDevice.flag, String(opts.outputDevice));

@@ -1,17 +1,16 @@
 "use strict";
 
-// The five IPC handlers the page can call. Their names and payloads are the
+// The IPC handlers the page can call. Their names and payloads are the
 // contract described by RvcBridge in renderer/src/lib/bridge.ts; changing one
 // side without the other will fail the preload shape test in desktop/tests.
 
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
 const { dialog, ipcMain } = require("electron");
 const { buildArgs, parseDevices } = require("../args");
 const { missingBaseModels } = require("../repo");
-const { attachLogs, filesIn, pythonEnv, runPython } = require("./python");
-const { getChild, getWin, setChild, setStopping } = require("./state");
+const { filesIn, runPython } = require("./python");
+const { getWin } = require("./state");
 
 const AUDIO_EXTS = [".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"];
 const IMAGE_MIME = {
@@ -23,8 +22,25 @@ const IMAGE_MIME = {
   ".svg": "image/svg+xml",
 };
 
-function registerIpc(locator) {
+function registerIpc(locator, worker) {
   const { root, python, missing } = locator;
+
+  // Check the page's options and turn them into worker flags, or say what is wrong.
+  function prepare(opts) {
+    const problem = missing();
+    if (problem) return { error: problem };
+    let argv;
+    try {
+      argv = buildArgs(opts);
+    } catch (error) {
+      return { error: error.message };
+    }
+    const noBaseModels = missingBaseModels(root, opts.f0);
+    if (noBaseModels) return { error: noBaseModels };
+    if (!fs.existsSync(opts.model)) return { error: `Model not found: ${opts.model}` };
+    if (opts.index && !fs.existsSync(opts.index)) return { error: `Index not found: ${opts.index}` };
+    return { argv };
+  }
 
   // Models live in assets/weights, index files in assets/indices, sounds in assets/sounds.
   ipcMain.handle("assets", () => {
@@ -91,34 +107,28 @@ function registerIpc(locator) {
     }
   });
 
-  // Start one live converter. Options are fixed for that process; the page locks them.
-  ipcMain.handle("start", (_event, opts) => {
-    if (getChild()) return { ok: false, error: "Already running" };
-    const problem = missing();
-    if (problem) return { ok: false, error: problem };
-    let args;
-    try {
-      args = buildArgs(opts);
-    } catch (error) {
-      return { ok: false, error: error.message };
-    }
-    const noBaseModels = missingBaseModels(root, opts.f0);
-    if (noBaseModels) return { ok: false, error: noBaseModels };
-    if (!fs.existsSync(opts.model)) return { ok: false, error: `Model not found: ${opts.model}` };
-    if (opts.index && !fs.existsSync(opts.index)) return { ok: false, error: `Index not found: ${opts.index}` };
-    setStopping(false);
-    const child = spawn(python, args, { cwd: root, windowsHide: true, env: pythonEnv() });
-    setChild(child);
-    attachLogs(child);
+  // Load or update the model without starting audio. The page calls this
+  // whenever the options change: idle, it preloads so Go live is instant;
+  // live, the worker applies the change with the least work it can.
+  ipcMain.handle("configure", (_event, opts) => {
+    if (!opts || !opts.model) return { ok: true };
+    const prepared = prepare(opts);
+    if (prepared.error) return { ok: false, error: prepared.error };
+    worker.send("configure", prepared.argv);
     return { ok: true };
   });
 
-  // Kill the live process. stopping marks the exit as expected so the page stays Idle.
+  // Go live. Progress arrives as "state" events, not as this reply.
+  ipcMain.handle("start", (_event, opts) => {
+    const prepared = prepare(opts || {});
+    if (prepared.error) return { ok: false, error: prepared.error };
+    worker.send("start", prepared.argv);
+    return { ok: true };
+  });
+
+  // Close the stream. The model stays loaded for the next start.
   ipcMain.handle("stop", () => {
-    const child = getChild();
-    if (!child) return { ok: true };
-    setStopping(true);
-    child.kill();
+    worker.stop();
     return { ok: true };
   });
 }

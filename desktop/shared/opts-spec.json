@@ -4,13 +4,20 @@
     "  desktop/renderer/src/lib/specs.ts      -> defaults, field metadata, tune grids",
     "  desktop/args.js                         -> CLI flag list for buildArgs",
     "  inference/realtime.py                   -> argparse type/default/choices/help",
+    "  inference/worker.py                     -> apply, to decide what a change costs",
     "Adding an option here should mean editing nothing else.",
+    "apply says what changing the option costs while the desktop app is running:",
+    "  live      -> used from the next audio block",
+    "  stream    -> the audio devices are reopened; the model stays loaded",
+    "  converter -> the converter is rebuilt and warmed up; the model stays loaded",
+    "  model     -> the voice model is reloaded; HuBERT and the pitch models are kept",
     "label/tip are the desktop app's wording; cliHelp is the terminal's. They",
     "are allowed to read differently because they are different audiences."
   ],
   "options": {
     "model": {
       "flag": "--model",
+      "apply": "model",
       "kind": "path",
       "default": "",
       "section": "voice",
@@ -20,6 +27,7 @@
     },
     "index": {
       "flag": "--index",
+      "apply": "live",
       "kind": "path",
       "default": "",
       "section": "voice",
@@ -29,6 +37,7 @@
     },
     "indexRate": {
       "flag": "--index-rate",
+      "apply": "live",
       "kind": "number",
       "default": 0.75,
       "step": 0.01,
@@ -41,6 +50,7 @@
     },
     "key": {
       "flag": "--key",
+      "apply": "live",
       "kind": "number",
       "integer": true,
       "default": 0,
@@ -54,6 +64,7 @@
     },
     "formant": {
       "flag": "--formant",
+      "apply": "live",
       "kind": "number",
       "default": 0,
       "step": 0.1,
@@ -64,6 +75,7 @@
     },
     "f0": {
       "flag": "--f0",
+      "apply": "converter",
       "kind": "enum",
       "default": "rmvpe",
       "choices": ["rmvpe", "fcpe", "pm"],
@@ -74,6 +86,7 @@
     },
     "f0Min": {
       "flag": "--f0-min",
+      "apply": "live",
       "kind": "number",
       "default": 50,
       "step": 1,
@@ -85,6 +98,7 @@
     },
     "f0Max": {
       "flag": "--f0-max",
+      "apply": "live",
       "kind": "number",
       "default": 1100,
       "step": 1,
@@ -96,6 +110,7 @@
     },
     "rmvpeThreshold": {
       "flag": "--rmvpe-threshold",
+      "apply": "live",
       "kind": "number",
       "default": 0.03,
       "step": 0.001,
@@ -107,6 +122,7 @@
     },
     "fcpeThreshold": {
       "flag": "--fcpe-threshold",
+      "apply": "live",
       "kind": "number",
       "default": 0.006,
       "step": 0.001,
@@ -118,6 +134,7 @@
     },
     "rmsMixRate": {
       "flag": "--rms-mix-rate",
+      "apply": "live",
       "kind": "number",
       "default": 0,
       "step": 0.01,
@@ -130,6 +147,7 @@
     },
     "inputGain": {
       "flag": "--input-gain",
+      "apply": "live",
       "kind": "number",
       "default": 1,
       "step": 0.1,
@@ -141,6 +159,7 @@
     },
     "outputGain": {
       "flag": "--output-gain",
+      "apply": "live",
       "kind": "number",
       "default": 1,
       "step": 0.1,
@@ -152,6 +171,7 @@
     },
     "noClip": {
       "flag": "--no-clip",
+      "apply": "live",
       "kind": "bool",
       "default": false,
       "section": "gain",
@@ -161,6 +181,7 @@
     },
     "blockTime": {
       "flag": "--block-time",
+      "apply": "converter",
       "kind": "number",
       "default": 0.25,
       "step": 0.01,
@@ -172,6 +193,7 @@
     },
     "crossfadeTime": {
       "flag": "--crossfade-time",
+      "apply": "converter",
       "kind": "number",
       "default": 0.05,
       "step": 0.01,
@@ -183,6 +205,7 @@
     },
     "extraTime": {
       "flag": "--extra-time",
+      "apply": "converter",
       "kind": "number",
       "default": 2.5,
       "step": 0.1,
@@ -194,6 +217,7 @@
     },
     "indexNeighbors": {
       "flag": "--index-neighbors",
+      "apply": "live",
       "kind": "number",
       "integer": true,
       "default": 8,
@@ -206,6 +230,7 @@
     },
     "sampleRate": {
       "flag": "--sample-rate",
+      "apply": "converter",
       "kind": "number",
       "integer": true,
       "default": 0,
@@ -218,6 +243,7 @@
     },
     "inputChannels": {
       "flag": "--input-channels",
+      "apply": "stream",
       "kind": "number",
       "integer": true,
       "default": 1,
@@ -230,6 +256,7 @@
     },
     "outputChannels": {
       "flag": "--output-channels",
+      "apply": "stream",
       "kind": "number",
       "integer": true,
       "default": 2,
@@ -242,6 +269,7 @@
     },
     "latency": {
       "flag": "--latency",
+      "apply": "stream",
       "kind": "string",
       "default": "",
       "section": "device",
@@ -252,6 +280,7 @@
     },
     "inputDevice": {
       "flag": "--input-device",
+      "apply": "stream",
       "kind": "string",
       "default": "",
       "section": "device",
@@ -261,6 +290,7 @@
     },
     "outputDevice": {
       "flag": "--output-device",
+      "apply": "stream",
       "kind": "string",
       "default": "",
       "section": "device",
@@ -270,6 +300,7 @@
     },
     "hostApi": {
       "flag": "--host-api",
+      "apply": "stream",
       "kind": "string",
       "default": "",
       "section": "device",
@@ -280,6 +311,7 @@
     },
     "wasapiExclusive": {
       "flag": "--wasapi-exclusive",
+      "apply": "stream",
       "kind": "bool",
       "default": false,
       "section": "device",
@@ -289,6 +321,7 @@
     },
     "wasapiAutoConvert": {
       "flag": "--wasapi-auto-convert",
+      "apply": "stream",
       "kind": "bool",
       "default": false,
       "section": "device",

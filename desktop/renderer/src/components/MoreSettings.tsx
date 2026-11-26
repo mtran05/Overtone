@@ -6,7 +6,6 @@ import styles from "./MoreSettings.module.css";
 
 interface Props {
   opts: InferenceOpts;
-  running: boolean;
   onPatch: (patch: Partial<InferenceOpts>) => void;
   onClose: () => void;
 }
@@ -14,12 +13,12 @@ interface Props {
 // The less-used knobs: timing, pitch tracking range, index search, gain, and
 // WASAPI device options. Everything here is a field described in the shared
 // option spec, so adding one is a one-line change.
-export default function MoreSettings({ opts, running, onPatch, onClose }: Props) {
+export default function MoreSettings({ opts, onPatch, onClose }: Props) {
   return (
     <Modal title="More settings" onClose={onClose}>
       <div className={styles.more}>
         {TUNING.map((section) => (
-          <TuneGrid key={section.title} section={section} opts={opts} disabled={running} onPatch={onPatch} />
+          <TuneGrid key={section.title} section={section} opts={opts} onPatch={onPatch} />
         ))}
       </div>
     </Modal>

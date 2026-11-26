@@ -8,9 +8,12 @@ const path = require("path");
 const { app, BrowserWindow } = require("electron");
 const { registerIpc } = require("./main/ipc");
 const { createLocator } = require("./main/locate");
-const { getChild, setWin } = require("./main/state");
+const { setWin } = require("./main/state");
+const { createWorker } = require("./main/worker");
 
 const locator = createLocator();
+// Started lazily on the first configure or start, then kept for the whole session.
+const worker = createWorker(locator);
 
 // Open the UI. The page cannot use Node; it talks to this process through preload.js.
 function createWindow() {
@@ -36,11 +39,7 @@ function createWindow() {
   // Layout probe for diagnosing shell geometry. Development only: the packaged
   // app does not ship debug-layout.js. See that file for usage.
   if (process.env.DEBUG_LAYOUT && !app.isPackaged) require("./debug-layout")(win);
-  win.on("closed", () => {
-    setWin(null);
-    const child = getChild();
-    if (child) child.kill();
-  });
+  win.on("closed", () => setWin(null));
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
@@ -49,13 +48,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  registerIpc(locator);
+  registerIpc(locator, worker);
   createWindow();
 });
 
-app.on("before-quit", () => {
-  const child = getChild();
-  if (child) child.kill();
+// Give the worker a moment to close the audio devices and exit, then quit for real.
+app.on("before-quit", (event) => {
+  if (!worker.isRunning()) return;
+  event.preventDefault();
+  worker.shutdown().then(() => app.quit());
 });
 
 app.on("window-all-closed", () => app.quit());

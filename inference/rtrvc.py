@@ -89,14 +89,7 @@ class RVC:
             self.device = config.device
             self.f0_up_key = key
             self.formant_shift = formant
-            settings = settings or PitchSettings.defaults()
-            self.f0_min = settings.f0_min
-            self.f0_max = settings.f0_max
-            self.rmvpe_threshold = settings.rmvpe_threshold
-            self.fcpe_threshold = settings.fcpe_threshold
-            self.index_neighbors = settings.index_neighbors
-            self.f0_mel_min = 1127 * np.log(1 + self.f0_min / 700)
-            self.f0_mel_max = 1127 * np.log(1 + self.f0_max / 700)
+            self.update_settings(settings or PitchSettings.defaults())
             self.is_half = config.is_half
             self.pth_path = pth_path
             self.index_path = index_path
@@ -160,9 +153,67 @@ class RVC:
 
     def change_index_rate(self, new_index_rate):
         """Change how strongly retrieved index features replace HuBERT features."""
-        if new_index_rate != 0 and self.index_rate == 0:
+        if new_index_rate != 0 and not hasattr(self, "index"):
             self._load_index()
         self.index_rate = new_index_rate
+
+    def change_index(self, index_path, index_rate):
+        """Switch to another index file, or none, and set its blend.
+
+        The new index is read before the old one is dropped, so a block that
+        runs in between still sees a complete index.
+        """
+        index_path = index_path or ""
+        if index_path != self.index_path:
+            if index_path and index_rate != 0:
+                index = faiss.read_index(index_path)
+                big_npy = index.reconstruct_n(0, index.ntotal)
+                self.index_rate = 0
+                self.index, self.big_npy = index, big_npy
+                logger.info("Index retrieval enabled")
+            elif hasattr(self, "index"):
+                self.index_rate = 0
+                del self.index
+                del self.big_npy
+            self.index_path = index_path
+        self.change_index_rate(index_rate if index_path else 0)
+
+    def update_settings(self, settings):
+        """Set the pitch bounds, detector thresholds, and index neighbour count."""
+        self.f0_min = settings.f0_min
+        self.f0_max = settings.f0_max
+        self.rmvpe_threshold = settings.rmvpe_threshold
+        self.fcpe_threshold = settings.fcpe_threshold
+        self.index_neighbors = settings.index_neighbors
+        self.f0_mel_min = 1127 * np.log(1 + self.f0_min / 700)
+        self.f0_mel_max = 1127 * np.log(1 + self.f0_max / 700)
+
+    def ensure_f0_model(self, method):
+        """Load the pitch model for method now, rather than inside the next block."""
+        if method == "rmvpe":
+            self._ensure_rmvpe()
+        elif method == "fcpe":
+            self._ensure_fcpe()
+
+    def _ensure_rmvpe(self):
+        """Load RMVPE once. Later RVC instances share it through last_rvc."""
+        if not hasattr(self, "model_rmvpe"):
+            from inference.rmvpe import RMVPE
+
+            logger.info("Loading RMVPE model")
+            self.model_rmvpe = RMVPE(
+                RMVPE_MODEL_PATH,
+                is_half=self.is_half,
+                device=self.device,
+            )
+
+    def _ensure_fcpe(self):
+        """Load FCPE once. Later RVC instances share it through last_rvc."""
+        if not hasattr(self, "model_fcpe"):
+            from inference.fcpe import FCPEInfer
+
+            logger.info("Loading FCPE model")
+            self.model_fcpe = FCPEInfer(self.device)
 
     def get_f0_post(self, f0):
         """Turn Hz pitch into the coarse 1..255 bins the synthesizer expects."""
@@ -209,25 +260,13 @@ class RVC:
 
     def get_f0_rmvpe(self, x, f0_up_key):
         """Estimate pitch with RMVPE and apply the semitone shift."""
-        if not hasattr(self, "model_rmvpe"):
-            from inference.rmvpe import RMVPE
-
-            logger.info("Loading RMVPE model")
-            self.model_rmvpe = RMVPE(
-                RMVPE_MODEL_PATH,
-                is_half=self.is_half,
-                device=self.device,
-            )
+        self._ensure_rmvpe()
         f0 = self.model_rmvpe.infer_from_audio(x, thred=self.rmvpe_threshold)
         return self._shift_f0(f0, f0_up_key)
 
     def get_f0_fcpe(self, x, f0_up_key):
         """Estimate pitch with FCPE and apply the semitone shift."""
-        if not hasattr(self, "model_fcpe"):
-            from inference.fcpe import FCPEInfer
-
-            logger.info("Loading FCPE model")
-            self.model_fcpe = FCPEInfer(self.device)
+        self._ensure_fcpe()
         f0 = (
             self.model_fcpe.infer(
                 x.unsqueeze(0).float(),

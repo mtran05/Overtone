@@ -17,10 +17,12 @@ export interface Device {
   note: string;
 }
 
-export interface ExitInfo {
-  code: number | null;
-  expected: boolean;
-}
+/**
+ * What the Python worker is doing, as reported by inference/worker.py:
+ * idle (no model loaded), loading (preparing a model), ready (loaded, not live),
+ * starting (opening the stream, loading first if needed), live (audio flowing).
+ */
+export type WorkerState = "idle" | "loading" | "ready" | "starting" | "live";
 
 /** Removes the listener it came from. Return it from a React effect. */
 export type Unsubscribe = () => void;
@@ -29,12 +31,12 @@ export interface RvcBridge {
   assets: () => Promise<Assets>;
   browse: (kind: "model" | "index" | "audio" | "image") => Promise<string | null>;
   devices: () => Promise<{ ok: true; devices: Device[] } | { ok: false; error: string }>;
+  /** Load or update the model without starting or stopping audio. */
+  configure: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   start: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   stop: () => Promise<{ ok: true }>;
   onLog: (callback: (line: string) => void) => Unsubscribe;
-  /** Fires once the model has loaded and warmed up and audio is flowing. */
-  onReady: (callback: () => void) => Unsubscribe;
-  onExit: (callback: (info: ExitInfo) => void) => Unsubscribe;
+  onState: (callback: (state: WorkerState) => void) => Unsubscribe;
 }
 
 export interface InferenceOpts {
