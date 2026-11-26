@@ -1,7 +1,7 @@
 "use strict";
 
 // Build the argument list for `python -m inference.realtime --live`.
-// parseDevices reads the text table printed by --list-devices.
+// parseDevices reads the JSON printed by --list-devices --json.
 // Every flag, default, and choice comes from shared/opts-spec.json, which is
 // also read by the renderer and by inference/realtime.py.
 
@@ -55,30 +55,27 @@ function buildArgs(opts) {
   return args;
 }
 
-// Device names can wrap onto the next line. Join those before matching columns.
+// Read the JSON printed by `--list-devices --json`. Entries without a numeric
+// index or a name are dropped, so a stray Python warning cannot fill a dropdown.
 function parseDevices(text) {
-  const devices = [];
-  const merged = [];
-  for (const line of String(text).split(/\r?\n/)) {
-    if (/^\s*\d+\s+\d+\s+\d+\s+\d+\s+/.test(line) || merged.length === 0) merged.push(line);
-    else merged[merged.length - 1] += line;
+  let rows;
+  try {
+    rows = JSON.parse(String(text).trim());
+  } catch {
+    throw new Error("Could not read the device list from Python");
   }
-  for (const line of merged) {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);
-    if (!match) continue;
-    const parts = match[5].split(/\s{2,}/);
-    if (parts.length < 2) continue;
-    devices.push({
-      index: Number(match[1]),
-      inputs: Number(match[2]),
-      outputs: Number(match[3]),
-      rate: Number(match[4]),
-      host: parts[0].trim(),
-      name: parts[1].trim(),
-      note: parts.slice(2).join(" ").replace(/[()]/g, "").trim(),
-    });
-  }
-  return devices;
+  if (!Array.isArray(rows)) throw new Error("Could not read the device list from Python");
+  return rows
+    .filter((row) => row && Number.isInteger(row.index) && typeof row.name === "string")
+    .map((row) => ({
+      index: row.index,
+      inputs: Number(row.inputs) || 0,
+      outputs: Number(row.outputs) || 0,
+      rate: Number(row.rate) || 0,
+      host: String(row.host ?? ""),
+      name: row.name.trim(),
+      note: String(row.note ?? ""),
+    }));
 }
 
 // The starting opts: exactly what shared/opts-spec.json declares, so a new

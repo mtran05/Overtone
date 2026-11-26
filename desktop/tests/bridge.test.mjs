@@ -14,15 +14,17 @@ const preload = readFileSync(path.join(desktop, "preload.js"), "utf8");
 const bridge = readFileSync(path.join(desktop, "renderer", "src", "lib", "bridge.ts"), "utf8");
 
 // `name: (...) => ...` inside the object exposed to the page.
-const exposedNames = () => [...preload.matchAll(/^\t(\w+):/gm)].map((match) => match[1]);
+const exposedNames = () => [...preload.matchAll(/^[ \t]+(\w+):/gm)].map((match) => match[1]);
 
 // Lines of the RvcBridge interface body.
 const interfaceBody = () => bridge.slice(bridge.indexOf("export interface RvcBridge"), bridge.indexOf("export interface InferenceOpts"));
 
-const declaredSignatures = () => [...interfaceBody().matchAll(/^\t(\w+):/gm)].map((match) => match[1]);
+const declaredSignatures = () => [...interfaceBody().matchAll(/^[ \t]+(\w+):/gm)].map((match) => match[1]);
 
 describe("the preload bridge", () => {
   it("exposes exactly the methods RvcBridge declares", () => {
+    // Guards against the patterns matching nothing, which would make this pass vacuously.
+    expect(exposedNames().length).toBeGreaterThan(0);
     expect(exposedNames().sort()).toEqual(declaredSignatures().sort());
   });
 

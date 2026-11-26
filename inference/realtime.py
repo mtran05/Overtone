@@ -11,216 +11,25 @@ Live mode plays the microphone through the default speakers:
 """
 
 import argparse
+import json
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
-import torch
-import torch.nn.functional as F
-from torchaudio.transforms import Resample
 
-from inference.device import detect_device
+# Only light imports at module level: --list-devices must not pull in torch.
+# The converter, soundfile, and sounddevice are imported where they are used.
 from inference.opts import OPT_SPEC, PitchSettings
-from inference.rtrvc import RVC
 
 
 logger = logging.getLogger(__name__)
 
 
-class RealtimeConverter:
-    """Stream fixed-size blocks through the real-time RVC model."""
-
-    def __init__(
-        self,
-        model_path,
-        index_path,
-        index_rate,
-        key,
-        formant,
-        f0_method,
-        sample_rate,
-        block_time=0.25,
-        crossfade_time=0.05,
-        extra_time=2.5,
-        rms_mix_rate=0.0,
-        settings=None,
-    ):
-        """Load the voice model and size the overlap buffers from the block settings."""
-        self.f0_method = f0_method
-        self.rms_mix_rate = rms_mix_rate
-        # Detection is expensive and runs once, where the device is first needed,
-        # rather than at import time.
-        self.config = detect_device()
-        self.device = self.config.device
-        self.rvc = RVC(
-            key,
-            formant,
-            str(model_path),
-            str(index_path) if index_path else "",
-            index_rate,
-            self.config,
-            settings=settings,
-        )
-        self.sample_rate = int(sample_rate or self.rvc.tgt_sr)
-        # zc is 10 ms. Every block length is a multiple of that so pitch frames line up.
-        self.zc = self.sample_rate // 100
-        self.block_frame = int(np.round(block_time * self.sample_rate / self.zc)) * self.zc
-        self.block_frame_16k = 160 * self.block_frame // self.zc
-        crossfade_frame = int(np.round(crossfade_time * self.sample_rate / self.zc)) * self.zc
-        self.sola_buffer_frame = min(crossfade_frame, 4 * self.zc)
-        self.sola_search_frame = self.zc
-        self.extra_frame = int(np.round(extra_time * self.sample_rate / self.zc)) * self.zc
-        self.skip_head = self.extra_frame // self.zc
-        self.return_length = (
-            self.block_frame + self.sola_buffer_frame + self.sola_search_frame
-        ) // self.zc
-
-        buffer_frames = (
-            self.extra_frame
-            + self.sola_buffer_frame
-            + self.sola_search_frame
-            + self.block_frame
-        )
-        self.input_wav = torch.zeros(buffer_frames, device=self.device, dtype=torch.float32)
-        self.input_wav_res = torch.zeros(
-            160 * buffer_frames // self.zc, device=self.device, dtype=torch.float32
-        )
-        self.sola_buffer = torch.zeros(
-            self.sola_buffer_frame, device=self.device, dtype=torch.float32
-        )
-        self.fade_in_window = (
-            torch.sin(
-                0.5
-                * np.pi
-                * torch.linspace(
-                    0.0,
-                    1.0,
-                    steps=self.sola_buffer_frame,
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-            )
-            ** 2
-        )
-        self.fade_out_window = 1 - self.fade_in_window
-        self.resampler = Resample(
-            orig_freq=self.sample_rate, new_freq=16000, dtype=torch.float32
-        ).to(self.device)
-        if self.rvc.tgt_sr != self.sample_rate:
-            self.output_resampler = Resample(
-                orig_freq=self.rvc.tgt_sr, new_freq=self.sample_rate, dtype=torch.float32
-            ).to(self.device)
-        else:
-            self.output_resampler = None
-        logger.info(
-            "Real-time converter ready: model=%s, %d Hz, block=%d samples, device=%s",
-            model_path,
-            self.sample_rate,
-            self.block_frame,
-            self.device,
-        )
-
-    def process_block(self, block):
-        """Convert one block and crossfade it onto the previous block."""
-        block = np.asarray(block, dtype=np.float32).reshape(-1)
-        if block.shape[0] != self.block_frame:
-            raise ValueError(
-                f"Expected {self.block_frame} samples, received {block.shape[0]}"
-            )
-        # Keep extra context in front of the new block, then resample that tail to 16 kHz.
-        self.input_wav[: -self.block_frame] = self.input_wav[self.block_frame :].clone()
-        self.input_wav[-self.block_frame :] = torch.from_numpy(block).to(self.device)
-        self.input_wav_res[: -self.block_frame_16k] = self.input_wav_res[
-            self.block_frame_16k :
-        ].clone()
-        resampled = self.resampler(self.input_wav[-self.block_frame - 2 * self.zc :])
-        self.input_wav_res[-self.block_frame_16k - 160 :] = resampled[160:]
-
-        inferred = self.rvc.infer(
-            self.input_wav_res,
-            self.block_frame_16k,
-            self.skip_head,
-            self.return_length,
-            self.f0_method,
-        )
-        if self.output_resampler is not None:
-            inferred = self.output_resampler(inferred)
-        if self.rms_mix_rate < 1:
-            inferred = self._mix_volume_envelope(inferred)
-
-        # SOLA slides the new audio until it best matches the previous tail, then crossfades.
-        window = self.sola_buffer_frame + self.sola_search_frame
-        conv_input = inferred[None, None, :window]
-        correlation = F.conv1d(conv_input, self.sola_buffer[None, None, :])
-        energy = torch.sqrt(
-            F.conv1d(
-                conv_input**2,
-                torch.ones(1, 1, self.sola_buffer_frame, device=self.device),
-            )
-            + 1e-8
-        )
-        sola_offset = int(torch.argmax(correlation[0, 0] / energy[0, 0]).item())
-        inferred = inferred[sola_offset:]
-        inferred[: self.sola_buffer_frame] *= self.fade_in_window
-        inferred[: self.sola_buffer_frame] += self.sola_buffer * self.fade_out_window
-        self.sola_buffer[:] = inferred[
-            self.block_frame : self.block_frame + self.sola_buffer_frame
-        ]
-        return inferred[: self.block_frame].detach().cpu().numpy()
-
-    def _mix_volume_envelope(self, inferred):
-        """Pull the converted loudness toward the input block's envelope."""
-        source = self.input_wav[self.extra_frame :]
-        source = source[: inferred.shape[0]].detach().cpu().numpy()
-        frame_length = 4 * self.zc
-        rms_source = _rms_envelope(source, frame_length, self.zc, inferred.shape[0])
-        rms_output = _rms_envelope(
-            inferred.detach().cpu().numpy(), frame_length, self.zc, inferred.shape[0]
-        )
-        rms_source = torch.from_numpy(rms_source).to(self.device)
-        rms_output = torch.from_numpy(rms_output).to(self.device)
-        rms_output = torch.clamp(rms_output, min=1e-3)
-        return inferred * torch.pow(rms_source / rms_output, 1 - self.rms_mix_rate)
-
-    def convert(self, audio, sample_rate):
-        """Convert a whole array by the same block path used for live audio."""
-        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
-        if sample_rate != self.sample_rate:
-            audio = (
-                Resample(orig_freq=sample_rate, new_freq=self.sample_rate)(
-                    torch.from_numpy(audio)
-                )
-                .numpy()
-            )
-        original_length = len(audio)
-        padding = (-original_length) % self.block_frame
-        if padding:
-            audio = np.pad(audio, (0, padding))
-        blocks = []
-        for start in range(0, len(audio), self.block_frame):
-            blocks.append(self.process_block(audio[start : start + self.block_frame]))
-        converted = np.concatenate(blocks)[:original_length]
-        peak = np.max(np.abs(converted))
-        if peak > 0.99:
-            converted = converted / peak * 0.99
-        return converted
-
-
-def _rms_envelope(audio, frame_length, hop_length, size):
-    """Return a per-sample RMS envelope aligned to audio."""
-    import librosa
-
-    rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)
-    envelope = torch.from_numpy(rms)
-    envelope = F.interpolate(
-        envelope.unsqueeze(0), size=size + 1, mode="linear", align_corners=True
-    )[0, 0, :-1]
-    return envelope.numpy()
-
-
 def _load_audio(path):
     """Read a file as mono float32 and return it with its sample rate."""
+    import soundfile as sf
+
     audio, sample_rate = sf.read(path, always_2d=False)
     audio = np.asarray(audio, dtype=np.float32)
     if audio.ndim == 2:
@@ -230,6 +39,9 @@ def _load_audio(path):
 
 def _build_converter(args):
     """Build a RealtimeConverter from parsed CLI arguments."""
+    # Loads torch, HuBERT, and the voice model, so it is the slow part of startup.
+    from inference.converter import RealtimeConverter
+
     index_rate = args.index_rate if args.index else 0.0
     settings = PitchSettings(
         f0_min=args.f0_min,
@@ -265,6 +77,8 @@ def _convert_file(args):
         converted = np.clip(converted, -1.0, 1.0)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    import soundfile as sf
+
     sf.write(output, converted, converter.sample_rate, subtype=args.subtype)
     logger.info("Wrote %s (%d samples at %d Hz)", output, len(converted), converter.sample_rate)
 
@@ -275,7 +89,8 @@ def _run_live(args):
     input_device = _resolve_device(args.input_device, "input", args.host_api)
     output_device = _resolve_device(args.output_device, "output", args.host_api)
     extra_settings = _wasapi_settings(sd, args, input_device, output_device)
-    converter = _build_converter(args)
+    # Check the channel counts before loading the model, so a bad device fails
+    # at once instead of after the model has loaded.
     input_device_info = sd.query_devices(
         input_device if input_device is not None else sd.default.device[0]
     )
@@ -292,6 +107,11 @@ def _run_live(args):
             f"Output device has {output_device_info['max_output_channels']} channels, "
             f"not {args.output_channels}"
         )
+
+    converter = _build_converter(args)
+    # Load the pitch model and record the GPU graphs now. Otherwise the first
+    # live blocks do that work inside the audio callback and drop out.
+    converter.warm_up()
 
     def callback(indata, outdata, frames, time_info, status):
         """Convert one microphone block and copy it into the speaker buffer."""
@@ -323,11 +143,23 @@ def _run_live(args):
         extra_settings=extra_settings,
         callback=callback,
     ):
+        _announce_ready()
         try:
             while True:
                 sd.sleep(1000)
         except KeyboardInterrupt:
             logger.info("Stopped")
+
+
+# The desktop app sets OVERTONE_EVENTS=1 and watches stdout for this exact line,
+# which means audio is flowing. desktop/main/python.js holds the same string.
+READY_LINE = "@overtone ready"
+
+
+def _announce_ready():
+    """Tell the desktop app that the stream is open. Silent for terminal users."""
+    if os.environ.get("OVERTONE_EVENTS") == "1":
+        print(READY_LINE, flush=True)
 
 
 def _import_sounddevice():
@@ -431,9 +263,36 @@ def _wasapi_settings(sd, args, input_device, output_device):
     )
 
 
-def _list_devices():
-    """Print the input and output devices PortAudio can see."""
+def _device_rows(sd):
+    """Return every PortAudio device as a plain dict, with its default marks."""
+    default_input, default_output = sd.default.device
+    rows = []
+    for index, device in enumerate(sd.query_devices()):
+        marks = []
+        if index == default_input:
+            marks.append("default input")
+        if index == default_output:
+            marks.append("default output")
+        rows.append(
+            {
+                "index": index,
+                "inputs": int(device["max_input_channels"]),
+                "outputs": int(device["max_output_channels"]),
+                "rate": float(device["default_samplerate"]),
+                "host": _host_api_name(sd, device),
+                "name": device["name"],
+                "note": ", ".join(marks),
+            }
+        )
+    return rows
+
+
+def _list_devices(as_json=False):
+    """Print the input and output devices PortAudio can see, as a table or JSON."""
     sd = _import_sounddevice()
+    if as_json:
+        print(json.dumps(_device_rows(sd)))
+        return
     default_input, default_output = sd.default.device
     print(f"{'idx':>4}  {'in':>3}  {'out':>3}  {'rate':>8}  {'host':<18}  name")
     for index, device in enumerate(sd.query_devices()):
@@ -471,6 +330,7 @@ def main(argv=None):
     parser.add_argument("--output", help="Output wav path for file mode")
     parser.add_argument("--live", action="store_true", help="Convert the microphone live")
     parser.add_argument("--list-devices", action="store_true", help="Print audio devices and exit")
+    parser.add_argument("--json", action="store_true", help="With --list-devices, print JSON instead of a table")
     parser.add_argument(
         "--subtype",
         default="FLOAT",
@@ -482,7 +342,7 @@ def main(argv=None):
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     if args.list_devices:
-        _list_devices()
+        _list_devices(as_json=args.json)
         return
     if not args.model:
         parser.error("--model is required")

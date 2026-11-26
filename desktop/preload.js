@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld("rvc", {
   start: (opts) => ipcRenderer.invoke("start", opts),
   stop: () => ipcRenderer.invoke("stop"),
   onLog: (callback) => ipcRenderer.on("log", (_event, line) => callback(line)),
+  onReady: (callback) => ipcRenderer.on("ready", () => callback()),
   onExit: (callback) => ipcRenderer.on("exit", (_event, info) => callback(info)),
 });

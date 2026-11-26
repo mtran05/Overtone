@@ -8,9 +8,13 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { getChild, getWin, isStopping, setChild, setStopping } = require("./state");
 
+// inference/realtime.py prints this exact line once the live stream is open.
+// It only does so when OVERTONE_EVENTS=1, so terminal users never see it.
+const READY_LINE = "@overtone ready";
+
 // Force UTF-8 and unbuffered logs so lines reach the window as they are printed.
 function pythonEnv() {
-  return { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" };
+  return { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", OVERTONE_EVENTS: "1" };
 }
 
 // Sorted full paths of files in dir that end with ext (string or string[]). Empty when the folder is missing.
@@ -63,7 +67,10 @@ function attachLogs(proc) {
     buffer += chunk.toString("utf8");
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop();
-    for (const line of lines) if (line) emit("log", line);
+    for (const line of lines) {
+      if (line === READY_LINE) emit("ready");
+      else if (line) emit("log", line);
+    }
   };
   proc.stdout.on("data", onData);
   proc.stderr.on("data", onData);
@@ -80,4 +87,4 @@ function attachLogs(proc) {
   });
 }
 
-module.exports = { filesIn, pythonEnv, runPython, attachLogs, emit };
+module.exports = { READY_LINE, filesIn, pythonEnv, runPython, attachLogs, emit };

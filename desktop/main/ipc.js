@@ -80,10 +80,10 @@ function registerIpc(locator) {
     return chosen;
   });
 
-  // Ask Python for the PortAudio device table and parse it for the two dropdowns.
+  // Ask Python for the PortAudio device list as JSON for the two dropdowns.
   ipcMain.handle("devices", async () => {
     try {
-      const text = await runPython(python, root, ["-m", "inference.realtime", "--list-devices"], missing);
+      const text = await runPython(python, root, ["-m", "inference.realtime", "--list-devices", "--json"], missing);
       return { ok: true, devices: parseDevices(text) };
     } catch (error) {
       return { ok: false, error: error.message };

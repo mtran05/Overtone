@@ -15,8 +15,9 @@ import { useLog } from "../hooks/useLog";
 // the previous settings and device list instead of resetting them.
 export interface Session {
   running: boolean;
-  /** Machine-readable state, used to pick the lamp colour. */
-  status: "Idle" | "Live" | "Stopped" | "Preview";
+  /** Machine-readable state, used to pick the lamp colour. "Starting" covers the
+   *  model load and warm-up, between pressing Go live and audio flowing. */
+  status: "Idle" | "Starting" | "Live" | "Stopped" | "Preview";
   /** What the lamp actually says. Scanning overrides the label while idle. */
   statusLabel: string;
   logLines: string[];
@@ -58,7 +59,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const setLive = useCallback((on: boolean) => {
     setRunning(on);
-    setStatus(on ? "Live" : "Idle");
+    setStatus(on ? "Starting" : "Idle");
   }, []);
 
   const setOpts = useCallback((next: InferenceOpts | ((o: InferenceOpts) => InferenceOpts)) => {
@@ -128,6 +129,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     rvc.onLog(pushLog);
+    rvc.onReady(() => setStatus((current) => (current === "Starting" ? "Live" : current)));
     rvc.onExit((info) => {
       setLive(false);
       if (!info.expected) {
@@ -141,7 +143,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     () => ({
       running,
       status,
-      statusLabel: !running && scan.kind === "loading" ? "Looking for devices…" : status,
+      statusLabel: !running && scan.kind === "loading" ? "Looking for devices…" : status === "Starting" ? "Starting…" : status,
       logLines: lines,
       opts,
       presets,

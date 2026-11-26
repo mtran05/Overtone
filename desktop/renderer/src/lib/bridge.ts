@@ -29,6 +29,8 @@ export interface RvcBridge {
   start: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   stop: () => Promise<{ ok: true }>;
   onLog: (callback: (line: string) => void) => void;
+  /** Fires once the model has loaded and warmed up and audio is flowing. */
+  onReady: (callback: () => void) => void;
   onExit: (callback: (info: ExitInfo) => void) => void;
 }
 
