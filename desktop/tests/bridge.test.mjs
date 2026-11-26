@@ -40,11 +40,16 @@ describe("the preload bridge", () => {
     expect(handled).toEqual(invoked);
   });
 
-  it("has a handler for every channel the page listens on", () => {
-    const ipc = readFileSync(path.join(desktop, "main", "ipc.js"), "utf8");
-    const handled = new Set([...ipc.matchAll(/ipcMain\.handle\("(\w+)"/g)].map((match) => match[1]));
-    const listened = [...preload.matchAll(/ipcRenderer\.on\("(\w+)"/g)].map((match) => match[1]);
-    expect(listened.length).toBeGreaterThan(0);
-    for (const channel of listened) expect(handled.has(channel) || listened.includes(channel), channel).toBe(true);
+  it("listens only on channels the main process actually emits", () => {
+    const python = readFileSync(path.join(desktop, "main", "python.js"), "utf8");
+    const emitted = new Set([...python.matchAll(/emit\("(\w+)"/g)].map((match) => match[1]));
+    const listened = [...preload.matchAll(/listen\("(\w+)"/g)].map((match) => match[1]);
+    expect(listened.sort()).toEqual(["exit", "log", "ready"]);
+    for (const channel of listened) expect(emitted.has(channel), channel).toBe(true);
+  });
+
+  it("returns an unsubscribe function from every listener", () => {
+    expect(preload).toContain("return () => ipcRenderer.removeListener(channel, listener);");
+    for (const name of ["onLog", "onReady", "onExit"]) expect(interfaceBody()).toMatch(new RegExp(`${name}: \\(callback: [^\\n]*\\) => Unsubscribe;`));
   });
 });

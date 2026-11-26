@@ -33,6 +33,9 @@ function createWindow() {
   });
   setWin(win);
   win.once("ready-to-show", () => win.show());
+  // Layout probe for diagnosing shell geometry. Development only: the packaged
+  // app does not ship debug-layout.js. See that file for usage.
+  if (process.env.DEBUG_LAYOUT && !app.isPackaged) require("./debug-layout")(win);
   win.on("closed", () => {
     setWin(null);
     const child = getChild();

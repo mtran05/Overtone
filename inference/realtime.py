@@ -162,6 +162,33 @@ def _announce_ready():
         print(READY_LINE, flush=True)
 
 
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
+
+
+def _missing_base_models(f0_method):
+    """Name the first missing base model and how to download it, or return None.
+
+    hubert.py and rtrvc.py load from the same paths, but importing them pulls
+    in torch, so the check is repeated here to fail in a second, not after
+    the imports. desktop/repo.js makes the same check for the app.
+    """
+    hubert = ASSETS / "hubert_base"
+    has_weights = any((hubert / name).is_file() for name in ("pytorch_model.bin", "model.safetensors"))
+    if not (hubert / "config.json").is_file() or not has_weights:
+        return (
+            f"HuBERT model missing from {hubert}. Download it with: "
+            'hf download lj1995/VoiceConversionWebUI --revision main --include "hubert_base/*" --local-dir assets'
+        )
+    rmvpe = ASSETS / "rmvpe" / "rmvpe.pt"
+    if f0_method == "rmvpe" and not rmvpe.is_file():
+        return (
+            f"RMVPE model missing: {rmvpe}. Download it with: "
+            "hf download lj1995/VoiceConversionWebUI rmvpe.pt --revision main --local-dir assets/rmvpe, "
+            "or pass --f0 fcpe or --f0 pm."
+        )
+    return None
+
+
 def _import_sounddevice():
     """Import PortAudio. The live path is the only caller, so file mode stays light."""
     import sounddevice as sd
@@ -356,6 +383,9 @@ def main(argv=None):
         parser.error("Channel counts must be at least 1")
     if args.index_neighbors < 1:
         parser.error("--index-neighbors must be at least 1")
+    missing = _missing_base_models(args.f0)
+    if missing:
+        parser.error(missing)
     if args.live:
         _run_live(args)
         return

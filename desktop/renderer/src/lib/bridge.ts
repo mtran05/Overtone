@@ -22,16 +22,19 @@ export interface ExitInfo {
   expected: boolean;
 }
 
+/** Removes the listener it came from. Return it from a React effect. */
+export type Unsubscribe = () => void;
+
 export interface RvcBridge {
   assets: () => Promise<Assets>;
   browse: (kind: "model" | "index" | "audio" | "image") => Promise<string | null>;
   devices: () => Promise<{ ok: true; devices: Device[] } | { ok: false; error: string }>;
   start: (opts: InferenceOpts) => Promise<{ ok: true } | { ok: false; error: string }>;
   stop: () => Promise<{ ok: true }>;
-  onLog: (callback: (line: string) => void) => void;
+  onLog: (callback: (line: string) => void) => Unsubscribe;
   /** Fires once the model has loaded and warmed up and audio is flowing. */
-  onReady: (callback: () => void) => void;
-  onExit: (callback: (info: ExitInfo) => void) => void;
+  onReady: (callback: () => void) => Unsubscribe;
+  onExit: (callback: (info: ExitInfo) => void) => Unsubscribe;
 }
 
 export interface InferenceOpts {

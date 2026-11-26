@@ -93,3 +93,15 @@ describe("sanitizeOpts", () => {
     expect(JSON.stringify(defaultOpts)).toBe(snapshot);
   });
 });
+
+describe("sanitizeOpts with incomplete saved data", () => {
+  it("fills missing fields from the spec defaults instead of throwing", () => {
+    const partial = { model: "voice.pth", f0: "fcpe" } as unknown as InferenceOpts;
+    expect(sanitizeOpts(partial)).toEqual({ ...defaultOpts, model: "voice.pth", f0: "fcpe" });
+  });
+
+  it("treats null text fields as empty", () => {
+    const damaged = { ...defaultOpts, hostApi: null, latency: null } as unknown as InferenceOpts;
+    expect(sanitizeOpts(damaged)).toMatchObject({ hostApi: "", latency: "" });
+  });
+});

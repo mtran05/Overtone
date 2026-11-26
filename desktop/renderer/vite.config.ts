@@ -1,8 +1,35 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
+// What the built page may load. The app ships as file:// pages, so file: is
+// listed next to 'self'. Preset artwork is a data: URL, and SFX clips play from
+// file: paths and bundled assets. No remote origin is allowed anywhere.
+const CSP = [
+  "default-src 'self' file:",
+  "script-src 'self' file:",
+  "style-src 'self' file:",
+  "img-src 'self' file: data: blob:",
+  "media-src 'self' file: data: blob:",
+  "font-src 'self' file: data:",
+  "connect-src 'self' file:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+].join("; ");
+
+// Added at build time only: the dev server injects inline scripts for hot
+// reload, which this policy would block.
+function contentSecurityPolicy(): Plugin {
+  return {
+    name: "overtone-csp",
+    apply: "build",
+    transformIndexHtml: () => [{ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: CSP }, injectTo: "head-prepend" }],
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), contentSecurityPolicy()],
   base: "./",
   css: {
     modules: {

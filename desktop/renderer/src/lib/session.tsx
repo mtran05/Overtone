@@ -1,5 +1,6 @@
-import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { bridge, type Device, type InferenceOpts } from "./bridge";
+import { shrinkImage } from "./images";
 import { createPreset, loadActivePresetId, loadStoredPresets, saveActivePresetId, saveStoredPresets, upsertPresetOnLive, type Preset } from "./presets";
 import { sanitizeOpts } from "./sanitize";
 import { defaultOpts } from "./specs";
@@ -41,6 +42,9 @@ export interface Session {
 
 const SessionContext = createContext<Session | null>(null);
 
+// A shrunk 192px WebP is a few tens of kilobytes. Anything well past that is a full-size original.
+const LARGE_IMAGE_CHARS = 200_000;
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<Session["status"]>("Idle");
@@ -49,9 +53,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [activePresetId, setActivePresetId] = useState<string | null>(loadActivePresetId);
   const { lines, push: pushLog, clear: clearLog } = useLog();
 
+  // Report a failed save once, not on every later edit, and again only after a save has worked.
+  const saveFailed = useRef(false);
   useEffect(() => {
-    saveStoredPresets(presets);
-  }, [presets]);
+    const saved = saveStoredPresets(presets);
+    if (!saved && !saveFailed.current) pushLog("Presets could not be saved: storage is full. Clear some preset images and try again.");
+    saveFailed.current = !saved;
+  }, [presets, pushLog]);
+
+  // Presets saved before images were shrunk on import can hold full-size photos. Shrink those once.
+  useEffect(() => {
+    let cancelled = false;
+    for (const preset of loadStoredPresets()) {
+      if (preset.image.length <= LARGE_IMAGE_CHARS) continue;
+      void shrinkImage(preset.image).then((image) => {
+        if (cancelled || image === preset.image) return;
+        setPresets((current) => current.map((item) => (item.id === preset.id && item.image === preset.image ? { ...item, image } : item)));
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     saveActivePresetId(activePresetId);
@@ -128,15 +151,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setStatus("Preview");
       return;
     }
-    rvc.onLog(pushLog);
-    rvc.onReady(() => setStatus((current) => (current === "Starting" ? "Live" : current)));
-    rvc.onExit((info) => {
-      setLive(false);
-      if (!info.expected) {
-        if (info.code) pushLog(`Stopped (${info.code})`);
-        setStatus("Stopped");
-      }
-    });
+    const unsubscribers = [
+      rvc.onLog(pushLog),
+      rvc.onReady(() => setStatus((current) => (current === "Starting" ? "Live" : current))),
+      rvc.onExit((info) => {
+        setLive(false);
+        if (!info.expected) {
+          if (info.code) pushLog(`Stopped (${info.code})`);
+          setStatus("Stopped");
+        }
+      }),
+    ];
+    // StrictMode mounts effects twice in development; without this every log line would arrive twice.
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
   }, [pushLog, setLive]);
 
   const value = useMemo<Session>(

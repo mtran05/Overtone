@@ -286,6 +286,7 @@ In the desktop app, the Electron main process spawns this pipeline as a Python c
 | `RVC_CUDA_GRAPH_MAX_CACHE` | Maximum number of recorded graph shapes to keep per model (default `8`).         |
 | `RVC_PYTHON`               | Path to the Python interpreter the desktop app should use instead of `.venv`.    |
 | `VITE_DEV_SERVER_URL`      | Makes Electron load the renderer from a Vite dev server for hot reload.          |
+| `DEBUG_LAYOUT`             | Development only: writes the window's layout geometry to `%TEMP%\layout-report.txt` and exits. |
 
 ## Development
 

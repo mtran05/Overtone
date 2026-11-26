@@ -9,6 +9,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { dialog, ipcMain } = require("electron");
 const { buildArgs, parseDevices } = require("../args");
+const { missingBaseModels } = require("../repo");
 const { attachLogs, filesIn, pythonEnv, runPython } = require("./python");
 const { getChild, getWin, setChild, setStopping } = require("./state");
 
@@ -101,6 +102,8 @@ function registerIpc(locator) {
     } catch (error) {
       return { ok: false, error: error.message };
     }
+    const noBaseModels = missingBaseModels(root, opts.f0);
+    if (noBaseModels) return { ok: false, error: noBaseModels };
     if (!fs.existsSync(opts.model)) return { ok: false, error: `Model not found: ${opts.model}` };
     if (opts.index && !fs.existsSync(opts.index)) return { ok: false, error: `Index not found: ${opts.index}` };
     setStopping(false);
