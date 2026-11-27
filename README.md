@@ -21,9 +21,8 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 [Screenshots](#screenshots) ·
 [Quick start](#quick-start) ·
 [Usage](#usage) ·
-[Desktop app](#desktop-app) ·
-[How it works](#how-it-works) ·
-[Development](#development)
+[Documentation](#documentation) ·
+[Contributing](CONTRIBUTING.md)
 
 <br />
 
@@ -33,46 +32,14 @@ Speak into your microphone and hear the converted voice live, or batch-convert a
 
 ---
 
-## Table of contents
-
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Requirements](#requirements)
-- [Quick start](#quick-start)
-  - [1. Create a virtual environment](#1-create-a-virtual-environment)
-  - [2. Install dependencies](#2-install-dependencies)
-  - [3. Download the base models](#3-download-the-base-models)
-  - [4. Add voice models](#4-add-voice-models)
-- [Usage](#usage)
-  - [Live microphone conversion](#live-microphone-conversion)
-  - [File conversion](#file-conversion)
-  - [Choosing audio devices](#choosing-audio-devices)
-  - [Common options](#common-options)
-- [Desktop app](#desktop-app)
-- [How it works](#how-it-works)
-- [Project structure](#project-structure)
-- [Configuration](#configuration)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
-- [Responsible use](#responsible-use)
-- [Acknowledgements](#acknowledgements)
-- [License](#license)
-
 ## Features
 
-- **Low-latency live conversion.** Microphone audio is processed in fixed-size blocks and stitched together with a SOLA crossfade, so the output stays continuous with no clicks at block edges.
-- **Offline file conversion.** Convert `.wav`, `.flac` or `.ogg` files through the exact same block pipeline used live, so what you hear live is what you get on disk.
-- **Three pitch trackers.** RMVPE (default, most accurate), FCPE (lighter on the GPU) and Praat PM (classic), selectable per session.
-- **Pitch and formant shifting.** Shift up to ±24 semitones and adjust formant independently to brighten or darken the timbre.
-- **FAISS index retrieval.** Optionally blend the output toward a voice's `.index` file for closer timbre matching.
-- **Automatic hardware selection.** Picks the best CUDA GPU and precision (float16 on modern cards, float32 on Pascal and GTX 16-series). Falls back to DirectML, then CPU.
-- **CUDA graph acceleration.** Fixed-shape GPU work (HuBERT, pitch, synthesizer) is recorded once and replayed on later blocks to cut kernel launch overhead.
-- **Flexible audio I/O.** Pick devices by index or name, filter by host API, and use WASAPI exclusive mode for the lowest latency on Windows.
-- **Desktop app.** An Electron + React interface with:
-  - **Live:** model, index, device and pitch controls with a streaming process log. The model preloads as soon as you pick it, so going live takes under a second, and every setting can change while you're live.
-  - **Presets:** saved voice profiles with artwork, quick switching and last-used tracking.
-  - **SFX:** a soundboard with per-pad keybinds and volume, a master volume, and optional routing to a second output device (for example a virtual cable into Discord or OBS). Keybinds can also work while another app, such as a game, has focus.
-- **One source of truth for settings.** Every option is defined once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json) and shared by the Python CLI, the Electron main process and the React UI.
+- **Live conversion with no seams.** Audio is converted in blocks and crossfaded, so there are no clicks where blocks meet.
+- **File conversion** through the same pipeline, so a file sounds exactly like live conversion would.
+- **Three pitch trackers:** RMVPE (most accurate), FCPE (lighter) and PM (classic), switchable while live.
+- **Pitch and formant shifting**, plus optional FAISS index blending for a closer match to the target voice.
+- **Fast on NVIDIA GPUs:** automatic precision selection and CUDA graph replay, with DirectML and CPU fallbacks.
+- **Desktop app** with a **Live** page that preloads your voice so going live is near-instant, saved voice **Presets**, and a **Soundboard** whose keys can work while a game has focus.
 
 ## Screenshots
 
@@ -155,69 +122,34 @@ The `assets/` folder is git-ignored, so models never end up in version control.
 
 ## Usage
 
-The CLI entry point is `inference.realtime`. Run `python -m inference.realtime --help` for the full list of options.
-
-### Live microphone conversion
+Convert your microphone live, playing the result through your speakers. Press `Ctrl+C` to stop:
 
 ```powershell
 python -m inference.realtime --model assets/weights/myvoice.pth --index assets/indices/myvoice.index --live
 ```
 
-This plays your converted voice through the default speakers. Press `Ctrl+C` to stop.
-
-### File conversion
-
-Leave out `--live` and pass `--input` and `--output` instead:
+Or convert a file:
 
 ```powershell
 python -m inference.realtime --model assets/weights/myvoice.pth --index assets/indices/myvoice.index --input voice.wav --output converted.wav
 ```
 
-Use `--subtype` to choose the output format: `FLOAT` (default), `PCM_16`, `PCM_24` or `PCM_32`.
+The options you'll reach for most:
 
-### Choosing audio devices
+| Flag                                 | Default | Description                                               |
+| ------------------------------------ | ------- | --------------------------------------------------------- |
+| `--key`                              | `0`     | Pitch shift in semitones, from −24 to 24                  |
+| `--formant`                          | `0`     | Formant shift in semitones                                |
+| `--f0`                               | `rmvpe` | Pitch tracker: `rmvpe`, `fcpe` or `pm`                    |
+| `--index-rate`                       | `0.75`  | How strongly to blend toward the index, from 0 to 1       |
+| `--input-device` / `--output-device` | system  | Device number from `--list-devices`, or part of its name  |
+| `--block-time`                       | `0.25`  | Block length in seconds. Lower means less delay.          |
 
-List every input and output device PortAudio can see:
+Every option, device selection and file formats are in **[docs/cli.md](docs/cli.md)**.
 
-```powershell
-python -m inference.realtime --list-devices
-```
+### Desktop app
 
-Add `--json` for machine-readable output. This is what the desktop app uses.
-
-Then select devices by index or by part of their name:
-
-```powershell
-python -m inference.realtime --model assets/weights/myvoice.pth --live --input-device "Microphone" --output-device "CABLE Input" --host-api WASAPI
-```
-
-### Common options
-
-| Flag                                   | Default | Description                                                                 |
-| -------------------------------------- | ------- | --------------------------------------------------------------------------- |
-| `--model`                              | —       | Path to a trained `.pth` voice model (required)                             |
-| `--index`                              | —       | Optional `.index` retrieval file                                            |
-| `--index-rate`                         | `0.75`  | How strongly to blend toward the index (0–1)                                |
-| `--key`                                | `0`     | Pitch shift in semitones (−24 to 24)                                        |
-| `--formant`                            | `0`     | Formant shift in semitones                                                  |
-| `--f0`                                 | `rmvpe` | Pitch tracker: `rmvpe`, `fcpe` or `pm`                                      |
-| `--f0-min` / `--f0-max`                | `50` / `1100` | Pitch range treated as voiced, in Hz                                  |
-| `--rms-mix-rate`                       | `0`     | `0` follows your loudness, `1` keeps the model's loudness                   |
-| `--input-gain` / `--output-gain`       | `1`     | Gain applied before and after conversion                                    |
-| `--block-time`                         | `0.25`  | Block length in seconds. Lower means less latency but more GPU load.        |
-| `--crossfade-time`                     | `0.05`  | SOLA crossfade length in seconds                                            |
-| `--extra-time`                         | `2.5`   | Context in seconds fed to the model ahead of each block                     |
-| `--input-device` / `--output-device`   | default | Device index or part of its name                                            |
-| `--host-api`                           | any     | Only consider devices on this host API (for example `WASAPI`)               |
-| `--latency`                            | auto    | `low`, `high` or a number of seconds                                        |
-| `--wasapi-exclusive`                   | off     | Open WASAPI devices in exclusive mode                                       |
-| `--safety-blocks`                      | `0`     | Blocks of extra delay that absorb an occasional slow block (see [Troubleshooting](#troubleshooting)) |
-
-## Desktop app
-
-The desktop app runs the same converter as `inference.realtime --live` and exposes every option through a graphical interface. It keeps one Python process running for the whole session, so a voice loads once and stays loaded. It drives the Python environment you set up in the [quick start](#quick-start); it does not install Python or download models for you.
-
-### Run from source
+The desktop app drives the same converter through a window, with every option available while you're live:
 
 ```powershell
 cd desktop
@@ -225,229 +157,17 @@ npm install
 npm start
 ```
 
-`desktop` is an npm workspace, so one `npm install` installs both the Electron shell and the React renderer. `npm start` rebuilds the renderer only when its sources have changed since the last build. Delete `renderer\dist` to force a rebuild.
+`npm run pack` builds a portable `desktop\dist\Overtone.exe`. Keep it inside the project folder, where it can find `.venv`. See **[docs/desktop.md](docs/desktop.md)** for the Live page, presets and soundboard keys.
 
-### Build a portable executable
+## Documentation
 
-```powershell
-cd desktop
-npm install
-npm run pack
-```
-
-This runs the full verification suite, builds the renderer and produces `desktop\dist\Overtone.exe`.
-
-> [!IMPORTANT]
-> Keep `Overtone.exe` inside the project folder (for example in `desktop\dist`). On launch it searches upward for the folder that contains both `.venv\Scripts\python.exe` and `inference\realtime.py`.
-
-Models in `assets\weights` and indexes in `assets\indices` appear in the app automatically, and you can browse to files stored anywhere else.
-
-### Soundboard keys
-
-Click **Bind** on a pad, then press a key or combination. Esc cancels, and Backspace clears the bind. Pad keys work on every page while Overtone has focus.
-
-Turn on **Work in other apps** to make them fire while a game or voice chat has focus too. A system-wide shortcut takes its key away from every other app, so only these binds go global:
-
-- combinations with Ctrl, Alt or the Windows key, such as `Ctrl+1` or `Alt+Shift+Q`;
-- F-keys and numpad keys.
-
-Plain keys like `A` keep working inside Overtone only. Pads that work everywhere show a small lit dot. If another app already owns a shortcut, the log says so and that pad stays in-window.
-
-## How it works
-
-```mermaid
-flowchart LR
-    MIC[Microphone or file] --> BUF[Block buffer<br/>with extra context]
-    BUF --> RS[Resample to 16 kHz]
-    RS --> HUB[HuBERT<br/>content features]
-    RS --> F0[Pitch tracker<br/>RMVPE / FCPE / PM]
-    HUB --> IDX[FAISS index blend<br/>optional]
-    IDX --> SYN[RVC synthesizer]
-    F0 --> SYN
-    SYN --> SOLA[SOLA alignment<br/>and crossfade]
-    SOLA --> OUT[Speakers or wav file]
-```
-
-1. **Buffering.** Incoming audio is cut into fixed blocks (`--block-time`), each prefixed with a few seconds of earlier audio (`--extra-time`) so the model has context.
-2. **Content.** HuBERT turns the 16 kHz audio into features that describe *what* was said, independent of who said it.
-3. **Retrieval.** When an index is provided, those features are pulled toward the nearest neighbours from the target voice's training data.
-4. **Pitch.** The selected tracker estimates the fundamental frequency, which is shifted by `--key`.
-5. **Synthesis.** The RVC synthesizer combines content and pitch into audio in the target voice.
-6. **Stitching.** SOLA slides each new block until it best matches the end of the previous one, then crossfades the two to avoid audible seams.
-
-Before the audio stream opens, the converter runs two silent warm-up blocks. This loads the pitch model and records the CUDA graphs, so the first real blocks don't drop out.
-
-### The desktop worker
-
-The desktop app doesn't start a new Python process each time you go live. Electron starts one `python -m inference.worker` process and keeps it. It sends that process JSON commands (`configure`, `start`, `stop`) on stdin, and reads back JSON state events on stdout.
-
-| Lamp              | Meaning                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| **Loading voice…** | A model was picked; it's loading and warming up in the background |
-| **Ready**         | Loaded and warm; **Go live** opens the stream in under a second |
-| **Starting…**     | Opening the stream, or briefly restarting it after a change    |
-| **Live**          | Audio is flowing                                               |
-| **Stopped**       | Audio stopped without you pressing Stop, for example a device error |
-
-Each option in [`opts-spec.json`](desktop/shared/opts-spec.json) has an `apply` field that says what changing it costs while you're live:
-
-| `apply`     | Options                                              | What happens                                                                  |
-| ----------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `live`      | pitch, formant, pitch tracker, index and index rate, gains, thresholds | Used from the next audio block, with no gap                  |
-| `stream`    | devices, host API, channels, latency, WASAPI, safety buffer | The audio devices reopen (well under a second); the model stays loaded |
-| `converter` | block, crossfade and context length, sample rate     | The converter is rebuilt and warmed up (about a second)                       |
-| `model`     | the voice model                                      | The voice reloads (about a second); HuBERT and the pitch models stay loaded   |
-
-Two details keep live changes smooth:
-
-- **Every pitch tracker is warmed up in the background preload.** Switching between RMVPE, FCPE and PM while live then only changes which model the next block uses.
-- **No CUDA graph is recorded while a stream is open.** Recording one takes about half a second, longer than a block. So a new formant value runs without a graph at first, still well inside the block's time budget, and gets a graph at the next warm-up.
-
-Pressing Stop closes the stream but keeps the model loaded. If Electron exits or crashes, the worker sees its stdin close and exits too, so it never keeps holding the microphone or the GPU.
-
-## Project structure
-
-```
-.
-├── inference/                 Python inference package
-│   ├── realtime.py            CLI entry point: file conversion, live mode, device listing
-│   ├── worker.py              long-running process the desktop app drives over stdin/stdout
-│   ├── live.py                audio devices and the live microphone-to-speaker stream
-│   ├── converter.py           block buffering, warm-up and SOLA crossfade
-│   ├── rtrvc.py               streaming RVC model (HuBERT, index, pitch cache, synthesizer)
-│   ├── device.py              GPU and precision selection
-│   ├── cuda_graph.py          CUDA graph capture and replay
-│   ├── opts.py                loads the shared option spec
-│   ├── hubert.py              HuBERT content features
-│   ├── rmvpe.py               RMVPE pitch estimation
-│   ├── fcpe.py                FCPE pitch estimation (DirectML-compatible)
-│   └── module/                synthesizer network, ported from upstream RVC
-├── desktop/                   Electron desktop app
-│   ├── main.js                app lifecycle and window
-│   ├── preload.js             the only API exposed to the page
-│   ├── args.js                builds CLI arguments for inference.realtime
-│   ├── repo.js                locates the project folder from the exe
-│   ├── main/                  project locator, the Python worker, IPC handlers
-│   ├── shared/opts-spec.json  single source of truth for every option
-│   ├── tests/                 main-process tests
-│   └── renderer/              React + TypeScript UI (Vite)
-│       └── src/
-│           ├── components/    one .tsx and one .module.css per component
-│           ├── hooks/         useLog, useDevices, useDismiss
-│           ├── lib/           bridge types, option specs, presets, sanitizing
-│           ├── pages/         Live, Presets and SFX pages
-│           └── styles/        global tokens and shared control styles
-├── tests/                     Python tests (pytest), with the model and audio devices faked
-├── .github/workflows/ci.yml   CI: ruff and pytest, plus the desktop verify suite
-├── pyproject.toml             ruff and pytest settings
-├── requirements.txt
-├── requirements-dev.txt       pytest and ruff
-└── LICENSE
-```
-
-## Configuration
-
-| Environment variable       | Purpose                                                                          |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| `RVC_CUDA_GRAPH`           | Set to `0` to turn off CUDA graph replay (on by default when supported).         |
-| `RVC_CUDA_GRAPH_MAX_CACHE` | Maximum number of recorded graph shapes to keep per model (default `8`).         |
-| `RVC_PYTHON`               | Path to the Python interpreter the desktop app should use instead of `.venv`.    |
-| `VITE_DEV_SERVER_URL`      | Makes Electron load the renderer from a Vite dev server for hot reload.          |
-| `DEBUG_LAYOUT`             | Development only: writes the window's layout geometry to `%TEMP%\layout-report.txt` and exits. |
-
-## Development
-
-### Python
-
-Install the development tools once, then run the tests and the linter from the repository root:
-
-```powershell
-python -m pip install -r requirements-dev.txt
-```
-
-```powershell
-python -m pytest
-```
-
-```powershell
-python -m ruff check inference tests
-```
-
-The tests need no GPU and no audio device. The worker's decisions, the device handling and the live callback run against fakes, and the converter's block and crossfade path runs on the CPU with a stand-in model. CI runs the same commands on every push and pull request.
-
-### Desktop
-
-All desktop scripts run from the `desktop` folder.
-
-| Script                              | What it does                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------ |
-| `npm run verify`                    | Runs `format:check`, `lint`, `typecheck` and `test`. Run this before committing.     |
-| `npm test`                          | Vitest across the Electron main process, the shared option spec and the renderer.    |
-| `npm run lint`                      | ESLint with zero warnings allowed.                                                   |
-| `npm run format` / `format:check`   | Prettier.                                                                            |
-| `npm run typecheck`                 | `tsc --noEmit` over the renderer.                                                    |
-| `npm run dev`                       | Vite dev server for the renderer, with hot reload.                                   |
-| `npm start`                         | Launches Electron.                                                                   |
-| `npm run pack`                      | `verify`, then the renderer build, then `electron-builder` into `desktop\dist`.      |
-
-### Front-end development with live reload
-
-Run the Vite dev server and point Electron at it, each in its own terminal:
-
-```powershell
-cd desktop
-npm run dev
-```
-
-```powershell
-cd desktop
-$env:VITE_DEV_SERVER_URL="http://localhost:5173"; npm start
-```
-
-### Adding an inference option
-
-Every option is described once in [`desktop/shared/opts-spec.json`](desktop/shared/opts-spec.json): its flag, type, default, range, UI label, tooltip and CLI help text. That file feeds `inference/realtime.py`'s argument parser, `desktop/args.js` and the renderer's form controls.
-
-1. Add the option to `opts-spec.json`. It appears in `python -m inference.realtime --help` and in the app's **More settings** sheet. Give it an `apply` value (see [the desktop worker](#the-desktop-worker)). If it can change while live, make the worker apply it in `Worker._apply` in [`inference/worker.py`](inference/worker.py).
-2. Add its type to `InferenceOpts` in [`desktop/renderer/src/lib/bridge.ts`](desktop/renderer/src/lib/bridge.ts).
-3. Read it in the Python code where it is needed.
-
-### Styling conventions
-
-- [`renderer/src/styles/global.css`](desktop/renderer/src/styles/global.css) holds only what has no owning component: the reset, the design tokens in `:root` and element defaults.
-- [`renderer/src/styles/controls.module.css`](desktop/renderer/src/styles/controls.module.css) holds the shared look of plain inputs and selects.
-- Everything else lives in the CSS module next to its component.
-
-## Troubleshooting
-
-<details>
-<summary><b>The desktop app says it could not find the project</b></summary>
-
-`Overtone.exe` must sit somewhere inside the project folder, no more than eight levels deep, and the project must contain `.venv\Scripts\python.exe`. Alternatively, set `RVC_PYTHON` to your interpreter's path.
-</details>
-
-<details>
-<summary><b>Live audio crackles or drops out</b></summary>
-
-Check the log to confirm inference is running on your GPU and not the CPU. Then try, in order:
-
-- **A safety buffer:** set **Safety buffer (blocks)** in More settings, or `--safety-blocks 1` or `2`. Conversion moves to its own thread, and the output runs that many blocks behind, so a slow moment, such as a game busy on the GPU, doesn't cut the voice out. The cost is that much extra delay.
-- **A larger block:** raise `--block-time` (for example to `0.35`).
-- **The lighter tracker:** switch to `fcpe`.
-- **More output buffering:** try `--latency high`.
-</details>
-
-<details>
-<summary><b>"Several devices match" or "No device matches"</b></summary>
-
-Run `--list-devices` and pass the device's numeric index, or add `--host-api` to narrow the search (the same device often appears once per host API).
-</details>
-
-<details>
-<summary><b>The converted voice sounds robotic or off-pitch</b></summary>
-
-Adjust `--key` so the pitch suits the target voice (for example +12 for a male-to-female conversion), raise `--rmvpe-threshold` to ignore background noise, or tune `--index-rate`.
-</details>
+| Guide                                            | What's in it                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| [Command line](docs/cli.md)                      | Every option, choosing audio devices, file conversion, environment variables     |
+| [Desktop app](docs/desktop.md)                   | Running and building the app, the status lamp, presets, soundboard keys          |
+| [Architecture](docs/architecture.md)             | How conversion works, the desktop worker, what each setting change costs, project layout |
+| [Troubleshooting](docs/troubleshooting.md)       | Crackling audio, devices, robotic voice, the app not finding the project         |
+| [Contributing](CONTRIBUTING.md)                  | Tests, linting, CI, adding an option, code conventions                           |
 
 ## Responsible use
 
